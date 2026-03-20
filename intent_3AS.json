@@ -1,0 +1,145 @@
+{
+  "metadata": {
+    "name": "InterAS-IPv6-Intent-9-routers" },
+    
+  "autonomous_systems": [
+    {
+      "name": "AS1",
+      "asn": 1,
+      "addressing": {
+        "ipv6_prefix": "2001:100:1::/48",
+        "loopback_pool": "2001:100:1::/64",
+        "link_pool": "2001:100:1:100::/56"
+      },
+      "routing": { "protocol": "rip" },
+      "routers": [
+        { "name": "R1", "role": "core", "neighbors": [
+	        { "router": "R2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+	        ] },
+        { "name": "R2", "role": "core", "neighbors": [
+            { "router": "R1", "type": "intra-as", "interface": "GigabitEthernet1/0" },
+            { "router": "R3", "type": "intra-as", "interface": "GigabitEthernet2/0" }
+          ]
+        },
+        { "name": "R3", "role": "border", "neighbors": [
+            { "router": "R2", "type": "intra-as", "interface": "GigabitEthernet1/0" },
+            { "router": "AS2:R4", "type": "inter-as", "interface": "GigabitEthernet2/0" },
+            { "router": "AS3:R7", "type": "inter-as", "interface": "FastEthernet0/0" }
+          ]
+        }
+      ],
+      "bgp_policies":{
+        "as_neighbors":{
+          "provider":[],
+          "peer":[3],
+          "customer":[2] 
+        },
+        "policies": {
+          "communities": {
+            "provider": "1:30",
+            "peer": "1:20",
+            "customer": "1:10"
+          },
+          "local_pref": {
+            "provider": 50,
+            "peer": 100,
+            "customer": 200
+          }
+        }
+      }
+    },
+    {
+      "name": "AS2",
+      "asn": 2,
+      "addressing": {
+        "ipv6_prefix": "2001:100:2::/48",
+        "loopback_pool": "2001:100:2::/64",
+        "link_pool": "2001:100:2:100::/56"
+      },
+      "routing": { "protocol": "ospfv3", "process_id": 1, "area": 0 },
+      "routers": [
+        { "name": "R4", "role": "border", "neighbors": [
+            { "router": "AS1:R3", "type": "inter-as", "interface": "GigabitEthernet1/0" },
+            { "router": "AS3:R7", "type": "inter-as", "interface": "FastEthernet0/0" },
+            { "router": "R5", "type": "intra-as", "interface": "GigabitEthernet2/0", "ospf_cost": 50 }
+          ]
+        },
+        { "name": "R5", "role": "core", "neighbors": [
+            { "router": "R4", "type": "intra-as", "interface": "GigabitEthernet1/0", "ospf_cost": 50 },
+            { "router": "R6", "type": "intra-as", "interface": "GigabitEthernet2/0", "ospf_cost": 100 }
+          ]
+        },
+        { "name": "R6", "role": "core", "neighbors": [
+            { "router": "R5", "type": "intra-as", "interface": "GigabitEthernet1/0", "ospf_cost": 100 }
+          ]
+        }
+      ], 
+      "bgp_policies":{
+		        "as_neighbors":{
+		          "provider":[1],
+		          "peer":[3],
+		          "customer":[] 
+		        },
+		        "policies": {
+		          "communities": {
+		            "provider": "1:30",
+		            "peer": "1:20",
+		            "customer": "1:10"
+		          },
+		          "local_pref": {
+		            "provider": 50,
+		            "peer": 100,
+		            "customer": 200
+		          }
+		        }
+		      }
+    },
+    {
+      "name": "AS3",
+      "asn": 3,
+      "addressing": {
+        "ipv6_prefix": "2001:100:3::/48",
+        "loopback_pool": "2001:100:3::/64",
+        "link_pool": "2001:100:3:100::/56"
+      },
+      "routing": { "protocol": "ospfv3", "process_id": 1, "area": 0 },
+      "routers": [
+        { "name": "R7", "role": "border", "neighbors": [
+            { "router": "AS1:R3", "type": "inter-as", "interface": "FastEthernet0/0" },
+            { "router": "AS2:R4", "type": "inter-as", "interface": "FastEthernet0/0" },
+            { "router": "R8", "type": "intra-as", "interface": "GigabitEthernet2/0", "ospf_cost": 50 }
+          ]
+        },
+        { "name": "R8", "role": "core", "neighbors": [
+            { "router": "R7", "type": "intra-as", "interface": "GigabitEthernet1/0", "ospf_cost": 50 },
+            { "router": "R9", "type": "intra-as", "interface": "GigabitEthernet2/0", "ospf_cost": 100 }
+          ]
+        },
+        { "name": "R9", "role": "core", "neighbors": [
+            { "router": "R8", "type": "intra-as", "interface": "GigabitEthernet1/0", "ospf_cost": 100 }
+          ]
+        }
+      ],
+      "bgp_policies":{
+		        "as_neighbors":{
+		          "provider":[],
+		          "peer":[1],
+		          "customer":[] 
+		        },
+		        "policies": {
+		          "communities": {
+		            "provider": "1:30",
+		            "peer": "1:20",
+		            "customer": "1:10"
+		          },
+		          "local_pref": {
+		            "provider": 50,
+		            "peer": 100,
+		            "customer": 200
+		          }
+		        }
+		      }
+    }
+  ],
+  "bgp": { "inter_as_link_pool": "2001:100:100::/56" }
+}
