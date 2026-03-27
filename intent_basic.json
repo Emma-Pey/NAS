@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "name": "Basic-IPv4-OSPFv2-4-routers"
+  },
+
+  "autonomous_systems": [
+    {
+      "name": "AS1",
+      "asn": 1,
+      "addressing": {
+        "loopback_pool": "10.255.255.0/24",
+        "link_pool":     "10.0.0.0/24"
+      },
+      "routing": {
+        "protocol":   "ospf",
+        "process_id": 1,
+        "area":       0
+      },
+      "routers": [
+        {
+          "name": "PE1",
+          "role": "pe",
+          "neighbors": [
+            { "router": "P1", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ]
+        },
+        {
+          "name": "P1",
+          "role": "p",
+          "neighbors": [
+            { "router": "PE1", "type": "intra-as", "interface": "GigabitEthernet1/0" },
+            { "router": "P2",  "type": "intra-as", "interface": "GigabitEthernet2/0" }
+          ]
+        },
+        {
+          "name": "P2",
+          "role": "p",
+          "neighbors": [
+            { "router": "P1",  "type": "intra-as", "interface": "GigabitEthernet1/0" },
+            { "router": "PE2", "type": "intra-as", "interface": "GigabitEthernet2/0" }
+          ]
+        },
+        {
+          "name": "PE2",
+          "role": "pe",
+          "neighbors": [
+            { "router": "P2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ]
+        }
+      ]
+    }
+  ]
+}
