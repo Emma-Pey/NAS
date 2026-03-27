@@ -43,6 +43,14 @@ class Router:
     bgp_policies: Dict[str, Dict[str, str]] = field(default_factory=dict)
     bgp_neighbor_options: Dict[str, Dict[str, Union[str, int, bool]]] = field(default_factory=dict)
     bgp_networks_v4: List[str] = field(default_factory=list)
+    vrfs: Dict[str, Dict[str, Union[str, List[str]]]] = field(default_factory=dict)
+    interface_vrf_map: Dict[str, str] = field(default_factory=dict)
+    mpls_interfaces: List[str] = field(default_factory=list)
+    bgp_vpnv4_neighbors: Dict[str, Dict[str, Union[int, bool, str]]] = field(default_factory=dict)
+    vrf_bgp_neighbors: Dict[str, List[Dict[str, Union[int, str, bool]]]] = field(default_factory=dict)
+    interface_options: Dict[str, Dict[str, Union[str, bool, int]]] = field(default_factory=dict)
+    unused_interfaces: List[str] = field(default_factory=list)
+    loopback_prefix_len_v4: int = 32
 
 
 @dataclass
@@ -58,6 +66,7 @@ class AutonomousSystem:
     process_id: Optional[int] = None
     area: Optional[int] = None
     ospf_style: str = "network"
+    ios_legacy_defaults: bool = False
     routers: Dict[str, Router] = field(default_factory=dict)
 
     def allocate_loopback(self) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
@@ -123,14 +132,37 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             process_id=as_data["routing"].get("process_id"),
             area=as_data["routing"].get("area"),
             ospf_style=as_data["routing"].get("ospf_style", "network"),
+            ios_legacy_defaults=(
+                as_data.get("ios_legacy_defaults", False)
+                or as_data.get("platform", {}).get("ios_legacy_defaults", False)
+            ),
         )
         for rdata in as_data["routers"]:
             router = Router(
                 name=rdata["name"],
                 role=rdata["role"],
-                asn=as_obj.asn,
+                asn=rdata.get("router_asn", as_obj.asn),
                 neighbors=[Neighbor(**n) for n in rdata.get("neighbors", [])]
             )
+
+            if "loopback" in rdata:
+                router.loopback = ipaddress.ip_address(rdata["loopback"])
+
+            router.interface_options = rdata.get("interface_options", {})
+            router.unused_interfaces = rdata.get("unused_interfaces", [])
+            router.loopback_prefix_len_v4 = rdata.get("loopback_prefix_len_v4", 32)
+
+            # Optional static interfaces (for CE links or manually fixed addressing)
+            for iface_data in rdata.get("static_interfaces", []):
+                ip_obj = ipaddress.ip_address(iface_data["ip"])
+                router.interfaces[iface_data["name"]] = Interface(
+                    name=iface_data["name"],
+                    ip=ip_obj,
+                    prefix_len=iface_data["prefix_len"],
+                    ospf_area=iface_data.get("ospf_area"),
+                    ripng=iface_data.get("ripng", False),
+                    ospf_cost=iface_data.get("ospf_cost"),
+                )
 
             # Optional explicit IPv4 BGP settings (used by MPLS VPN / CE-PE scenarios)
             router.bgp_networks_v4 = rdata.get("bgp_networks_v4", [])
@@ -142,6 +174,39 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                     if key in b:
                         options[key] = b[key]
                 router.bgp_neighbor_options[neigh_ip] = options
+
+            # Optional MPLS L3VPN settings for IPv4 PE/CE style configs
+            for vrf in rdata.get("vrfs", []):
+                vrf_name = vrf["name"]
+                router.vrfs[vrf_name] = {
+                    "rd": vrf["rd"],
+                    "rt_export": vrf.get("rt_export", []),
+                    "rt_import": vrf.get("rt_import", []),
+                }
+
+            router.interface_vrf_map = rdata.get("interface_vrf_map", {})
+            router.mpls_interfaces = rdata.get("mpls_interfaces", [])
+
+            for vpn_peer in rdata.get("bgp_vpnv4_neighbors", []):
+                neigh_ip = vpn_peer["ip"]
+                router.bgp_vpnv4_neighbors[neigh_ip] = {
+                    "asn": vpn_peer["asn"],
+                    "activate": vpn_peer.get("activate", True),
+                    "send_community_extended": vpn_peer.get("send_community_extended", False),
+                }
+
+                # Make sure the base neighbor exists in global BGP if user only declares vpnv4 entry.
+                if neigh_ip not in router.bgp_neighbors:
+                    router.bgp_neighbors[neigh_ip] = vpn_peer["asn"]
+
+            for vrf_peer in rdata.get("vrf_bgp_neighbors", []):
+                vrf_name = vrf_peer["vrf"]
+                router.vrf_bgp_neighbors.setdefault(vrf_name, []).append({
+                    "ip": vrf_peer["ip"],
+                    "asn": vrf_peer["asn"],
+                    "activate": vrf_peer.get("activate", True),
+                    "allowas_in": vrf_peer.get("allowas_in", False),
+                })
 
             as_obj.routers[router.name] = router
         as_map[as_obj.name] = as_obj
@@ -164,7 +229,8 @@ def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:
     # Loopbacks
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
-            router.loopback = as_obj.allocate_loopback()
+            if router.loopback is None:
+                router.loopback = as_obj.allocate_loopback()
 
     # Intra-AS links
     for as_obj in as_map.values():
@@ -293,6 +359,22 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
         "!",
         "multilink bundle-name authenticated",
         "!",
+    ]
+
+    if as_obj.ip_version == 4 and as_obj.ios_legacy_defaults:
+        lines += [
+            "no ipv6 cef",
+            "!",
+        ]
+
+    if as_obj.ip_version == 4 and router.mpls_interfaces:
+        lines += [
+            "mpls label protocol ldp",
+            "mpls ldp router-id Loopback0 force",
+            "!",
+        ]
+
+    lines += [
         "ip tcp synwait-time 5",
         "!",
     ]
@@ -304,7 +386,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
         # Loopback
         lines += [
             "interface Loopback0",
-            f" ip address {router.loopback} 255.255.255.255",
+            f" ip address {router.loopback} {_mask(router.loopback_prefix_len_v4)}",
         ]
         if as_obj.protocol == "ospf" and as_obj.ospf_style == "interface":
             lines.append(f" ip ospf {as_obj.process_id} area {as_obj.area}")
@@ -317,12 +399,61 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
         for iface in router.interfaces.values():
             iface_lines = [
                 f"interface {iface.name}",
-                f" ip address {iface.ip} {_mask(iface.prefix_len)}",
             ]
-            if as_obj.protocol == "ospf" and as_obj.ospf_style == "interface":
+            if iface.name in router.interface_vrf_map:
+                iface_lines.append(f" ip vrf forwarding {router.interface_vrf_map[iface.name]}")
+            iface_lines.append(f" ip address {iface.ip} {_mask(iface.prefix_len)}")
+            if (
+                as_obj.protocol == "ospf"
+                and as_obj.ospf_style == "interface"
+                and iface.ospf_area is not None
+                and iface.name not in router.interface_vrf_map
+            ):
                 iface_lines.append(f" ip ospf {as_obj.process_id} area {iface.ospf_area}")
-            iface_lines += [" no shutdown", "!"]
+            if iface.name in router.mpls_interfaces:
+                iface_lines.append(" mpls ip")
+
+            options = router.interface_options.get(iface.name, {})
+            if "duplex" in options:
+                iface_lines.append(f" duplex {options['duplex']}")
+            if "negotiation_auto" in options and options["negotiation_auto"]:
+                iface_lines.append(" negotiation auto")
+
+            if options.get("shutdown", False):
+                iface_lines += [" shutdown", "!"]
+            else:
+                iface_lines += [" no shutdown", "!"]
+
             lines += iface_lines
+
+        for iface_name in router.unused_interfaces:
+            if iface_name in router.interfaces:
+                continue
+            lines += [
+                f"interface {iface_name}",
+                " no ip address",
+                " shutdown",
+                " negotiation auto",
+                "!",
+            ]
+
+        # VRF definitions (if any)
+        if router.vrfs:
+            vrf_lines: List[str] = []
+            for vrf_name, vrf in router.vrfs.items():
+                vrf_lines += [
+                    f"ip vrf {vrf_name}",
+                    f" rd {vrf['rd']}",
+                ]
+                for rt in vrf["rt_export"]:
+                    vrf_lines.append(f" route-target export {rt}")
+                for rt in vrf["rt_import"]:
+                    vrf_lines.append(f" route-target import {rt}")
+                vrf_lines.append("!")
+
+            # Put VRFs before interface blocks in rendered config style.
+            loopback_idx = lines.index("interface Loopback0")
+            lines = lines[:loopback_idx] + vrf_lines + lines[loopback_idx:]
 
         # OSPFv2
         if as_obj.protocol == "ospf":
@@ -333,12 +464,19 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             if as_obj.ospf_style == "network":
                 lines.append(f" network {router.loopback} 0.0.0.0 area {as_obj.area}")
                 for iface in router.interfaces.values():
+                    if iface.ospf_area is None:
+                        continue
                     net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
                     lines.append(f" network {net.network_address} {_wildcard(iface.prefix_len)} area {iface.ospf_area}")
             lines.append("!")
 
         # Optional IPv4 BGP block (manual-like CE/PE configs)
-        if router.bgp_neighbors or router.bgp_networks_v4:
+        if (
+            router.bgp_neighbors
+            or router.bgp_networks_v4
+            or router.bgp_vpnv4_neighbors
+            or router.vrf_bgp_neighbors
+        ):
             lines += [
                 f"router bgp {router.asn}",
                 " bgp log-neighbor-changes",
@@ -368,7 +506,31 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                     lines.append(f"  no neighbor {neigh_ip} activate")
                 if options.get("next_hop_self"):
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
-            lines += [" exit-address-family", "!"]
+            lines += [" exit-address-family"]
+
+            if router.bgp_vpnv4_neighbors:
+                lines += [" !", " address-family vpnv4"]
+                for neigh_ip, opts in router.bgp_vpnv4_neighbors.items():
+                    if opts.get("activate", True):
+                        lines.append(f"  neighbor {neigh_ip} activate")
+                    else:
+                        lines.append(f"  no neighbor {neigh_ip} activate")
+                    if opts.get("send_community_extended"):
+                        lines.append(f"  neighbor {neigh_ip} send-community extended")
+                lines.append(" exit-address-family")
+
+            for vrf_name, peers in router.vrf_bgp_neighbors.items():
+                lines += [" !", f" address-family ipv4 vrf {vrf_name}"]
+                for peer in peers:
+                    peer_ip = peer["ip"]
+                    lines.append(f"  neighbor {peer_ip} remote-as {peer['asn']}")
+                    if peer.get("activate", True):
+                        lines.append(f"  neighbor {peer_ip} activate")
+                    if peer.get("allowas_in"):
+                        lines.append(f"  neighbor {peer_ip} allowas-in")
+                lines.append(" exit-address-family")
+
+            lines.append("!")
 
     # ------------------------------------------------------------------ IPv6
     else:
@@ -484,6 +646,15 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             lines.append("!")
 
     # ------------------------------------------------------------------ Common
+    if as_obj.ip_version == 4 and as_obj.ios_legacy_defaults:
+        lines += [
+            "ip forward-protocol nd",
+            "!",
+            "no ip http server",
+            "no ip http secure-server",
+            "!",
+        ]
+
     lines += [
         "control-plane",
         "!",
@@ -534,7 +705,7 @@ def main(intent_path: str) -> None:
     for as_obj in as_map.values():
         print(f"\n{as_obj.name} (IPv{as_obj.ip_version}, {as_obj.protocol}):")
         for router in as_obj.routers.values():
-            lo_len = 32 if as_obj.ip_version == 4 else 128
+            lo_len = router.loopback_prefix_len_v4 if as_obj.ip_version == 4 else 128
             print(f"  {router.name:<6}  Lo0: {router.loopback}/{lo_len}")
             for iface in router.interfaces.values():
                 print(f"         {iface.name}: {iface.ip}/{iface.prefix_len}")

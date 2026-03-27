@@ -1,0 +1,277 @@
+{
+  "metadata": {
+    "name": "IPv4-MPLS-L3VPN-Example"
+  },
+  "autonomous_systems": [
+    {
+      "name": "AS1",
+      "asn": 1,
+      "ios_legacy_defaults": true,
+      "addressing": {
+        "loopback_pool": "1.1.1.0/24",
+        "link_pool": "10.0.0.0/24"
+      },
+      "routing": {
+        "protocol": "ospf",
+        "process_id": 1,
+        "area": 0,
+        "ospf_style": "interface"
+      },
+      "routers": [
+        {
+          "name": "PE1",
+          "role": "pe",
+          "loopback": "1.1.1.1",
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" },
+            "GigabitEthernet1/0": { "negotiation_auto": true },
+            "GigabitEthernet2/0": { "negotiation_auto": true }
+          },
+          "unused_interfaces": ["GigabitEthernet3/0"],
+          "neighbors": [
+            { "router": "P1", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ],
+          "static_interfaces": [
+            { "name": "FastEthernet0/0", "ip": "10.0.1.2", "prefix_len": 30 },
+            { "name": "GigabitEthernet2/0", "ip": "10.0.3.2", "prefix_len": 30 }
+          ],
+          "vrfs": [
+            {
+              "name": "BLACK",
+              "rd": "1:101",
+              "rt_export": ["1:10"],
+              "rt_import": ["1:10"]
+            },
+            {
+              "name": "BLUE",
+              "rd": "1:201",
+              "rt_export": ["1:20"],
+              "rt_import": ["1:20"]
+            }
+          ],
+          "bgp_neighbors": [
+            { "ip": "2.2.2.2", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "3.3.3.3", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "4.4.4.4", "asn": 1, "update_source": "Loopback0", "activate": false },
+            { "ip": "10.0.1.1", "asn": 2 }
+          ],
+          "bgp_vpnv4_neighbors": [
+            { "ip": "4.4.4.4", "asn": 1, "activate": true, "send_community_extended": true }
+          ],
+          "vrf_bgp_neighbors": [
+            { "vrf": "BLACK", "ip": "10.0.1.1", "asn": 2 },
+            { "vrf": "BLUE", "ip": "10.0.3.1", "asn": 4 }
+          ],
+          "interface_vrf_map": {
+            "FastEthernet0/0": "BLACK",
+            "GigabitEthernet2/0": "BLUE"
+          },
+          "mpls_interfaces": ["GigabitEthernet1/0"]
+        },
+        {
+          "name": "P1",
+          "role": "p",
+          "router_asn": 2,
+          "loopback": "2.2.2.2",
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" },
+            "GigabitEthernet1/0": { "negotiation_auto": true }
+          },
+          "unused_interfaces": ["GigabitEthernet2/0", "GigabitEthernet3/0"],
+          "neighbors": [
+            { "router": "PE1", "type": "intra-as", "interface": "FastEthernet0/0" },
+            { "router": "P2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ],
+          "bgp_neighbors": [
+            { "ip": "1.1.1.1", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "3.3.3.3", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "4.4.4.4", "asn": 1, "update_source": "Loopback0", "next_hop_self": true }
+          ],
+          "mpls_interfaces": ["FastEthernet0/0", "GigabitEthernet1/0"]
+        },
+        {
+          "name": "P2",
+          "role": "p",
+          "loopback": "3.3.3.3",
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" },
+            "GigabitEthernet1/0": { "negotiation_auto": true }
+          },
+          "unused_interfaces": ["GigabitEthernet2/0", "GigabitEthernet3/0"],
+          "neighbors": [
+            { "router": "P1", "type": "intra-as", "interface": "FastEthernet0/0" },
+            { "router": "PE2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ],
+          "bgp_neighbors": [
+            { "ip": "1.1.1.1", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "2.2.2.2", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "4.4.4.4", "asn": 1, "update_source": "Loopback0", "next_hop_self": true }
+          ],
+          "mpls_interfaces": ["FastEthernet0/0", "GigabitEthernet1/0"]
+        },
+        {
+          "name": "PE2",
+          "role": "pe",
+          "loopback": "4.4.4.4",
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" },
+            "GigabitEthernet1/0": { "negotiation_auto": true },
+            "GigabitEthernet2/0": { "negotiation_auto": true }
+          },
+          "unused_interfaces": ["GigabitEthernet3/0"],
+          "neighbors": [
+            { "router": "P2", "type": "intra-as", "interface": "FastEthernet0/0" }
+          ],
+          "static_interfaces": [
+            { "name": "GigabitEthernet1/0", "ip": "10.0.2.1", "prefix_len": 30 },
+            { "name": "GigabitEthernet2/0", "ip": "10.0.4.1", "prefix_len": 30 }
+          ],
+          "vrfs": [
+            {
+              "name": "BLACK",
+              "rd": "1:102",
+              "rt_export": ["1:10"],
+              "rt_import": ["1:10"]
+            },
+            {
+              "name": "BLUE",
+              "rd": "1:202",
+              "rt_export": ["1:20"],
+              "rt_import": ["1:20"]
+            }
+          ],
+          "bgp_neighbors": [
+            { "ip": "1.1.1.1", "asn": 1, "update_source": "Loopback0", "activate": false },
+            { "ip": "2.2.2.2", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "3.3.3.3", "asn": 1, "update_source": "Loopback0", "next_hop_self": true },
+            { "ip": "10.0.2.2", "asn": 3 }
+          ],
+          "bgp_vpnv4_neighbors": [
+            { "ip": "1.1.1.1", "asn": 1, "activate": true, "send_community_extended": true }
+          ],
+          "vrf_bgp_neighbors": [
+            { "vrf": "BLACK", "ip": "10.0.2.2", "asn": 3 },
+            { "vrf": "BLUE", "ip": "10.0.4.2", "asn": 4 }
+          ],
+          "interface_vrf_map": {
+            "GigabitEthernet1/0": "BLACK",
+            "GigabitEthernet2/0": "BLUE"
+          },
+          "mpls_interfaces": ["FastEthernet0/0"]
+        }
+      ]
+    },
+    {
+      "name": "AS2",
+      "asn": 2,
+      "ios_legacy_defaults": true,
+      "addressing": {
+        "loopback_pool": "192.168.11.0/24",
+        "link_pool": "10.0.1.0/30"
+      },
+      "routing": {
+        "protocol": "bgp"
+      },
+      "routers": [
+        {
+          "name": "C1",
+          "role": "ce",
+          "loopback_prefix_len_v4": 24,
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" }
+          },
+          "unused_interfaces": ["GigabitEthernet1/0", "GigabitEthernet2/0", "GigabitEthernet3/0"],
+          "neighbors": [],
+          "static_interfaces": [
+            { "name": "FastEthernet0/0", "ip": "10.0.1.1", "prefix_len": 30 }
+          ],
+          "bgp_networks_v4": ["192.168.11.0"],
+          "bgp_neighbors": [
+            { "ip": "10.0.1.2", "asn": 1 }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AS3",
+      "asn": 3,
+      "ios_legacy_defaults": true,
+      "addressing": {
+        "loopback_pool": "192.168.12.0/24",
+        "link_pool": "10.0.2.0/30"
+      },
+      "routing": {
+        "protocol": "bgp"
+      },
+      "routers": [
+        {
+          "name": "C2",
+          "role": "ce",
+          "loopback_prefix_len_v4": 24,
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" }
+          },
+          "unused_interfaces": ["GigabitEthernet1/0", "GigabitEthernet2/0", "GigabitEthernet3/0"],
+          "neighbors": [],
+          "static_interfaces": [
+            { "name": "FastEthernet0/0", "ip": "10.0.2.2", "prefix_len": 30 }
+          ],
+          "bgp_networks_v4": ["192.168.12.0"],
+          "bgp_neighbors": [
+            { "ip": "10.0.2.1", "asn": 1 }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AS4",
+      "asn": 4,
+      "ios_legacy_defaults": true,
+      "addressing": {
+        "loopback_pool": "192.168.20.0/22",
+        "link_pool": "10.0.3.0/29"
+      },
+      "routing": {
+        "protocol": "bgp"
+      },
+      "routers": [
+        {
+          "name": "C3",
+          "role": "ce",
+          "loopback": "192.168.21.1",
+          "loopback_prefix_len_v4": 24,
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" }
+          },
+          "unused_interfaces": ["GigabitEthernet1/0", "GigabitEthernet2/0", "GigabitEthernet3/0"],
+          "neighbors": [],
+          "static_interfaces": [
+            { "name": "FastEthernet0/0", "ip": "10.0.3.1", "prefix_len": 30 }
+          ],
+          "bgp_networks_v4": ["192.168.21.0"],
+          "bgp_neighbors": [
+            { "ip": "10.0.3.2", "asn": 1, "allowas_in": true }
+          ]
+        },
+        {
+          "name": "C4",
+          "role": "ce",
+          "loopback": "192.168.22.1",
+          "loopback_prefix_len_v4": 24,
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" }
+          },
+          "unused_interfaces": ["GigabitEthernet1/0", "GigabitEthernet2/0", "GigabitEthernet3/0"],
+          "neighbors": [],
+          "static_interfaces": [
+            { "name": "FastEthernet0/0", "ip": "10.0.4.2", "prefix_len": 30 }
+          ],
+          "bgp_networks_v4": ["192.168.22.0"],
+          "bgp_neighbors": [
+            { "ip": "10.0.4.1", "asn": 1, "allowas_in": true }
+          ]
+        }
+      ]
+    }
+  ]
+}
