@@ -41,6 +41,8 @@ class Router:
     interfaces: Dict[str, Interface] = field(default_factory=dict)
     bgp_neighbors: Dict[str, int] = field(default_factory=dict)
     bgp_policies: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    bgp_neighbor_options: Dict[str, Dict[str, Union[str, int, bool]]] = field(default_factory=dict)
+    bgp_networks_v4: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +57,7 @@ class AutonomousSystem:
     ipv6_prefix: Optional[ipaddress.IPv6Network] = None
     process_id: Optional[int] = None
     area: Optional[int] = None
+    ospf_style: str = "network"
     routers: Dict[str, Router] = field(default_factory=dict)
 
     def allocate_loopback(self) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
@@ -119,6 +122,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             protocol=as_data["routing"]["protocol"],
             process_id=as_data["routing"].get("process_id"),
             area=as_data["routing"].get("area"),
+            ospf_style=as_data["routing"].get("ospf_style", "network"),
         )
         for rdata in as_data["routers"]:
             router = Router(
@@ -127,6 +131,18 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                 asn=as_obj.asn,
                 neighbors=[Neighbor(**n) for n in rdata.get("neighbors", [])]
             )
+
+            # Optional explicit IPv4 BGP settings (used by MPLS VPN / CE-PE scenarios)
+            router.bgp_networks_v4 = rdata.get("bgp_networks_v4", [])
+            for b in rdata.get("bgp_neighbors", []):
+                neigh_ip = b["ip"]
+                router.bgp_neighbors[neigh_ip] = b["asn"]
+                options: Dict[str, Union[str, int, bool]] = {}
+                for key in ("update_source", "allowas_in", "activate", "next_hop_self"):
+                    if key in b:
+                        options[key] = b[key]
+                router.bgp_neighbor_options[neigh_ip] = options
+
             as_obj.routers[router.name] = router
         as_map[as_obj.name] = as_obj
 
@@ -289,29 +305,70 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
         lines += [
             "interface Loopback0",
             f" ip address {router.loopback} 255.255.255.255",
+        ]
+        if as_obj.protocol == "ospf" and as_obj.ospf_style == "interface":
+            lines.append(f" ip ospf {as_obj.process_id} area {as_obj.area}")
+        lines += [
             " no shutdown",
             "!",
         ]
 
         # Physical interfaces
         for iface in router.interfaces.values():
-            lines += [
+            iface_lines = [
                 f"interface {iface.name}",
                 f" ip address {iface.ip} {_mask(iface.prefix_len)}",
-                " no shutdown",
-                "!",
             ]
+            if as_obj.protocol == "ospf" and as_obj.ospf_style == "interface":
+                iface_lines.append(f" ip ospf {as_obj.process_id} area {iface.ospf_area}")
+            iface_lines += [" no shutdown", "!"]
+            lines += iface_lines
 
         # OSPFv2
-        lines += [
-            f"router ospf {as_obj.process_id}",
-            f" router-id {rid}",
-            f" network {router.loopback} 0.0.0.0 area {as_obj.area}",
-        ]
-        for iface in router.interfaces.values():
-            net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
-            lines.append(f" network {net.network_address} {_wildcard(iface.prefix_len)} area {iface.ospf_area}")
-        lines.append("!")
+        if as_obj.protocol == "ospf":
+            lines += [
+                f"router ospf {as_obj.process_id}",
+                f" router-id {rid}",
+            ]
+            if as_obj.ospf_style == "network":
+                lines.append(f" network {router.loopback} 0.0.0.0 area {as_obj.area}")
+                for iface in router.interfaces.values():
+                    net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
+                    lines.append(f" network {net.network_address} {_wildcard(iface.prefix_len)} area {iface.ospf_area}")
+            lines.append("!")
+
+        # Optional IPv4 BGP block (manual-like CE/PE configs)
+        if router.bgp_neighbors or router.bgp_networks_v4:
+            lines += [
+                f"router bgp {router.asn}",
+                " bgp log-neighbor-changes",
+            ]
+            for neigh_ip, neigh_asn in router.bgp_neighbors.items():
+                lines.append(f" neighbor {neigh_ip} remote-as {neigh_asn}")
+                options = router.bgp_neighbor_options.get(neigh_ip, {})
+                update_source = options.get("update_source")
+                if update_source:
+                    lines.append(f" neighbor {neigh_ip} update-source {update_source}")
+                if "allowas_in" in options:
+                    allowas_value = options["allowas_in"]
+                    if isinstance(allowas_value, bool):
+                        if allowas_value:
+                            lines.append(f" neighbor {neigh_ip} allowas-in")
+                    else:
+                        lines.append(f" neighbor {neigh_ip} allowas-in {allowas_value}")
+
+            lines += [" !", " address-family ipv4"]
+            for network in router.bgp_networks_v4:
+                lines.append(f"  network {network}")
+            for neigh_ip in router.bgp_neighbors.keys():
+                options = router.bgp_neighbor_options.get(neigh_ip, {})
+                if options.get("activate", True):
+                    lines.append(f"  neighbor {neigh_ip} activate")
+                else:
+                    lines.append(f"  no neighbor {neigh_ip} activate")
+                if options.get("next_hop_self"):
+                    lines.append(f"  neighbor {neigh_ip} next-hop-self")
+            lines += [" exit-address-family", "!"]
 
     # ------------------------------------------------------------------ IPv6
     else:
