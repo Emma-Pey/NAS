@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "name": "Basic-IPv4-OSPFv2-4-routers"
+    "name": "MPLS-BGP-VPN-4-routers"
   },
 
   "autonomous_systems": [
@@ -14,37 +14,148 @@
       "routing": {
         "protocol":   "ospf",
         "process_id": 1,
-        "area":       0
+        "area":       0,
+        "ospf_style": "interface"
       },
+      "ios_legacy_defaults": true,
       "routers": [
         {
           "name": "PE1",
           "role": "pe",
+          "loopback": "1.1.1.1",
+          "loopback_prefix_len_v4": 32,
           "neighbors": [
             { "router": "P1", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ],
+          "mpls_interfaces": ["GigabitEthernet1/0"],
+          "vrfs": [
+            {
+              "name": "BLACK",
+              "rd": "1:101",
+              "rt_export": ["1:10"],
+              "rt_import": ["1:10"]
+            },
+            {
+              "name": "BLUE",
+              "rd": "1:201",
+              "rt_export": ["1:20"],
+              "rt_import": ["1:20"]
+            }
+          ],
+          "static_interfaces": [
+            { "name": "FastEthernet0/0",   "ip": "10.0.1.2", "prefix_len": 30 },
+            { "name": "GigabitEthernet2/0","ip": "10.0.3.2", "prefix_len": 30 }
+          ],
+          "interface_vrf_map": {
+            "FastEthernet0/0":    "BLACK",
+            "GigabitEthernet2/0": "BLUE"
+          },
+          "interface_options": {
+            "FastEthernet0/0":    { "duplex": "full" },
+            "GigabitEthernet2/0": { "negotiation_auto": true }
+          },
+          "unused_interfaces": ["GigabitEthernet3/0"],
+          "bgp_vpnv4_neighbors": [
+            {
+              "ip": "4.4.4.4",
+              "asn": 1,
+              "activate": true,
+              "send_community_extended": true
+            }
+          ],
+          "bgp_neighbors": [
+            { "ip": "2.2.2.2", "asn": 1, "update_source": "Loopback0", "activate": true,  "next_hop_self": true },
+            { "ip": "3.3.3.3", "asn": 1, "update_source": "Loopback0", "activate": true,  "next_hop_self": true },
+            { "ip": "4.4.4.4", "asn": 1, "update_source": "Loopback0", "activate": false }
+          ],
+          "vrf_bgp_neighbors": [
+            { "vrf": "BLACK", "ip": "10.0.1.1", "asn": 2, "activate": true },
+            { "vrf": "BLUE",  "ip": "10.0.3.1", "asn": 4, "activate": true }
           ]
         },
         {
           "name": "P1",
           "role": "p",
+          "loopback": "2.2.2.2",
+          "loopback_prefix_len_v4": 32,
           "neighbors": [
-            { "router": "PE1", "type": "intra-as", "interface": "GigabitEthernet1/0" },
-            { "router": "P2",  "type": "intra-as", "interface": "GigabitEthernet2/0" }
-          ]
+            { "router": "PE1", "type": "intra-as", "interface": "FastEthernet0/0" },
+            { "router": "P2",  "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ],
+          "mpls_interfaces": ["FastEthernet0/0", "GigabitEthernet1/0"],
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" }
+          },
+          "unused_interfaces": ["GigabitEthernet2/0", "GigabitEthernet3/0"]
         },
         {
           "name": "P2",
           "role": "p",
+          "loopback": "3.3.3.3",
+          "loopback_prefix_len_v4": 32,
           "neighbors": [
-            { "router": "P1",  "type": "intra-as", "interface": "GigabitEthernet1/0" },
-            { "router": "PE2", "type": "intra-as", "interface": "GigabitEthernet2/0" }
-          ]
+            { "router": "P1",  "type": "intra-as", "interface": "FastEthernet0/0" },
+            { "router": "PE2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+          ],
+          "mpls_interfaces": ["FastEthernet0/0", "GigabitEthernet1/0"],
+          "interface_options": {
+            "FastEthernet0/0": { "duplex": "full" }
+          },
+          "unused_interfaces": ["GigabitEthernet2/0", "GigabitEthernet3/0"]
         },
         {
           "name": "PE2",
           "role": "pe",
+          "loopback": "4.4.4.4",
+          "loopback_prefix_len_v4": 32,
           "neighbors": [
-            { "router": "P2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
+            { "router": "P2", "type": "intra-as", "interface": "FastEthernet0/0" }
+          ],
+          "mpls_interfaces": ["FastEthernet0/0"],
+          "vrfs": [
+            {
+              "name": "BLACK",
+              "rd": "1:102",
+              "rt_export": ["1:10"],
+              "rt_import": ["1:10"]
+            },
+            {
+              "name": "BLUE",
+              "rd": "1:202",
+              "rt_export": ["1:20"],
+              "rt_import": ["1:20"]
+            }
+          ],
+          "static_interfaces": [
+            { "name": "GigabitEthernet1/0", "ip": "10.0.2.1", "prefix_len": 30 },
+            { "name": "GigabitEthernet2/0", "ip": "10.0.4.1", "prefix_len": 30 }
+          ],
+          "interface_vrf_map": {
+            "GigabitEthernet1/0": "BLACK",
+            "GigabitEthernet2/0": "BLUE"
+          },
+          "interface_options": {
+            "FastEthernet0/0":    { "duplex": "full" },
+            "GigabitEthernet1/0": { "negotiation_auto": true },
+            "GigabitEthernet2/0": { "negotiation_auto": true }
+          },
+          "unused_interfaces": ["GigabitEthernet3/0"],
+          "bgp_vpnv4_neighbors": [
+            {
+              "ip": "1.1.1.1",
+              "asn": 1,
+              "activate": true,
+              "send_community_extended": true
+            }
+          ],
+          "bgp_neighbors": [
+            { "ip": "1.1.1.1", "asn": 1, "update_source": "Loopback0", "activate": false },
+            { "ip": "2.2.2.2", "asn": 1, "update_source": "Loopback0", "activate": true, "next_hop_self": true },
+            { "ip": "3.3.3.3", "asn": 1, "update_source": "Loopback0", "activate": true, "next_hop_self": true }
+          ],
+          "vrf_bgp_neighbors": [
+            { "vrf": "BLACK", "ip": "10.0.2.2", "asn": 3, "activate": true },
+            { "vrf": "BLUE",  "ip": "10.0.4.2", "asn": 4, "activate": true }
           ]
         }
       ]
