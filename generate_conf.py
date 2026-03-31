@@ -128,10 +128,10 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             loopback_pool=loopback_pool,
             link_pool=link_pool,
             inter_as_link_pool=inter_as_pool,
-            protocol=as_data["routing"]["protocol"],
-            process_id=as_data["routing"].get("process_id"),
-            area=as_data["routing"].get("area"),
-            ospf_style=as_data["routing"].get("ospf_style", "network"),
+            protocol=as_data.get("routing", {}).get("protocol"),
+            process_id=as_data.get("routing", {}).get("process_id"),
+            area=as_data.get("routing", {}).get("area"),
+            ospf_style=as_data.get("routing", {}).get("ospf_style", "network"),
             ios_legacy_defaults=(
                 as_data.get("ios_legacy_defaults", False)
                 or as_data.get("platform", {}).get("ios_legacy_defaults", False)
@@ -712,5 +712,5 @@ def main(intent_path: str) -> None:
 
 
 if __name__ == "__main__":
-    intent_path = sys.argv[1] if len(sys.argv) > 1 else "intent_basic.json"
+    intent_path = sys.argv[1] if len(sys.argv) > 1 else "intent_vrf.json"
     main(intent_path)
