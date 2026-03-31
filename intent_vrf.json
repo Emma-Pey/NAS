@@ -118,5 +118,6 @@
       "mpls": false,
       "bgp":{"allow-as in": false}
     }
-  ]
+  ],
+  "bgp": { "inter_as_link_pool": "20.0.0.0/24"}
 }
