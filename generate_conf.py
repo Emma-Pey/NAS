@@ -118,7 +118,8 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             ipv6_prefix = None
             loopback_pool = ipaddress.IPv4Network(addr["loopback_pool"])
             link_pool = ipaddress.IPv4Network(addr["link_pool"])
-            inter_as_pool = None
+            inter_as_pool = ipaddress.IPv4Network(data.get("bgp", {}).get("inter_as_link_pool")) \
+                if "bgp" in data else None
 
         as_obj = AutonomousSystem(
             name=as_data["name"],
@@ -274,42 +275,48 @@ def build_bgp_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
                 r1.bgp_neighbors[str(r2.loopback)] = as_obj.asn
                 r2.bgp_neighbors[str(r1.loopback)] = as_obj.asn
 
-
 def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
             for neigh in router.neighbors:
                 if neigh.type == "inter-as":
                     remote_as_name, remote_router_name = neigh.router.split(":")
+                    
+                    # Anti-doublon : on ne traite le lien que du côté du "petit" nom de routeur
                     if remote_router_name > router.name:
                         remote_as = as_map[remote_as_name]
                         remote_router = remote_as.routers[remote_router_name]
 
-                        link_prefix = as_obj.allocate_link_prefix(inter_as=True)
+                        # --- CHOIX DU POOL DE L'AS1 ---
+                        # Ici, on décide d'utiliser le pool de l'AS courant (as_obj)
+                        # On appelle allocate_link_prefix sur as_obj, mais SANS l'option inter_as
+                        link_prefix = as_obj.allocate_link_prefix(inter_as=False)
+                        
                         r_ip = link_prefix[1]
                         n_ip = link_prefix[2]
 
+                        p_len = 30 if as_obj.ip_version == 4 else 64
+
+                        # Config du routeur local (ex: PE1 dans AS1)
                         router.interfaces[neigh.interface] = Interface(
                             name=neigh.interface,
                             ip=r_ip,
-                            prefix_len=64,
-                            ospf_area=as_obj.area if as_obj.protocol == "ospfv3" else None,
-                            ripng=False,
+                            prefix_len=p_len,
+                            ospf_area=None # Généralement pas d'OSPF sur un lien Inter-AS
                         )
 
-                        remote_iface = next(n.interface for n in remote_router.neighbors if n.router == f"{as_obj.name}:{router.name}")
-                        remote_router.interfaces[remote_iface] = Interface(
-                            name=remote_iface,
+                        # Config du routeur distant (ex: CE1 dans AS2)
+                        remote_iface_name = next(n.interface for n in remote_router.neighbors if n.router == f"{as_obj.name}:{router.name}")
+                        remote_router.interfaces[remote_iface_name] = Interface(
+                            name=remote_iface_name,
                             ip=n_ip,
-                            prefix_len=64,
-                            ospf_area=remote_as.area if remote_as.protocol == "ospfv3" else None,
-                            ripng=False,
+                            prefix_len=p_len,
+                            ospf_area=None
                         )
 
+                        # Appairage BGP
                         router.bgp_neighbors[str(n_ip)] = remote_as.asn
                         remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn
-
-
 # ---------------------------------------------------------------------------
 # Config generation
 # ---------------------------------------------------------------------------
