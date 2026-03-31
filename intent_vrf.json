@@ -1,0 +1,122 @@
+{
+  "metadata": {
+    "name": "InterAS-IPv4-Topology-vrf"
+  },
+  "autonomous_systems": [
+    {
+      "name": "AS1",
+      "asn": 1,
+      "addressing": {
+        "loopback_pool": "1.1.1.0/24",
+        "link_pool": "10.0.0.0/24"
+      },
+      "routing": { "protocol": "ospf", "process_id": 1, "area": 0 },
+      "routers": [
+        { "name": "PE1", "role": "PE", "neighbors": [
+            { "router": "AS2:CE1", "type": "inter-as", "interface": "f0/0" },
+            { "router": "AS4:CE3", "type": "inter-as", "interface": "g2/0" },
+            { "router": "P1", "type": "intra-as", "interface": "g1/0" }
+          ] 
+        },
+        { "name": "P1", "role": "PE", "neighbors": [
+            { "router": "PE1", "type": "intra-as", "interface": "f0/0" },
+            { "router": "AS5:CE5", "type": "inter-as", "interface": "g2/0" },
+            { "router": "P2", "type": "intra-as", "interface": "g1/0" }
+          ]
+        },
+        { "name": "P2", "role": "P", "neighbors": [
+            { "router": "P1", "type": "intra-as", "interface": "f0/0" },
+            { "router": "PE2", "type": "intra-as", "interface": "g1/0" }
+          ]
+        },
+        { "name": "PE2", "role": "PE", "neighbors": [
+            { "router": "P2", "type": "intra-as", "interface": "f0/0" },
+            { "router": "AS3:CE2", "type": "inter-as", "interface": "g1/0" },
+            { "router": "AS4:CE4", "type": "inter-as", "interface": "g2/0" }
+          ]
+        }
+      ],
+      "bgp":{"allow-as in": false},
+      "mpls": true,
+      "vrfs": [
+        {
+          "name": "BLACK",
+          "rd_range": "1:100-199",
+          "rt_import": ["1:10", "1:30"],
+          "rt_export": ["1:10"],
+          "interfaces": ["PE1:f0/0", "PE2:g1/0"]
+        },
+        {
+          "name": "BLUE",
+          "rd_range": "1:200-299",
+          "rt_import": ["1:20", "1:30"],
+          "rt_export": ["1:20"],
+          "interfaces": ["P1:g2/0"]
+        },
+        {
+          "name": "PINK",
+          "rd_range": "1:300-399",
+          "rt_import": ["1:10", "1:20", "1:30"],
+          "rt_export": ["1:30"],
+          "interfaces": ["PE1:g2/0"]
+        }
+      ]
+    },
+    {
+      "name": "AS2",
+      "asn": 2,
+      "addressing": { "loopback_pool": "192.168.11.0/24", "link_pool": "10.0.1.0/24" },
+      "routers": [
+        { "name": "CE1", "role": "CE", "neighbors": [
+            { "router": "AS1:PE1", "type": "inter-as", "interface": "f0/0" }
+          ] 
+        }
+      ],
+      "mpls": false,
+      "bgp":{"allow-as in": false}
+    },
+    {
+      "name": "AS3",
+      "asn": 3,
+      "addressing": { "loopback_pool": "192.168.12.0/24", "link_pool": "10.0.2.0/24" },
+      "routers": [
+        { "name": "CE2", "role": "CE", "neighbors": [
+            { "router": "AS1:PE2", "type": "inter-as", "interface": "f0/0" }
+          ] 
+        }
+      ],
+      "mpls": false,
+      "bgp":{"allow-as in": false}
+    },
+    {
+      "name": "AS4",
+      "asn": 4,
+      "addressing": { "loopback_pool": "192.168.21.0/24", "link_pool": "10.0.3.0/24" },
+      "routers": [
+        { "name": "CE3", "role": "CE", "neighbors": [
+            { "router": "AS1:PE1", "type": "inter-as", "interface": "f0/0" }
+          ] 
+        },
+        { "name": "CE4", "role": "CE", "neighbors": [
+            { "router": "AS1:PE2", "type": "inter-as", "interface": "f0/0" }
+          ] 
+        }
+      ],
+      "mpls": false,
+      "bgp":{"allow-as in": true}
+    },
+    {
+      "name": "AS5",
+      "asn": 5,
+      "addressing": { "loopback_pool": "192.168.22.0/24", "link_pool": "10.0.4.0/24" },
+      "routers": [
+        { "name": "CE5", "role": "CE", "neighbors": [
+            { "router": "AS1:P1", "type": "inter-as", "interface": "f0/0" }
+          ] 
+        }
+      ],
+      "mpls": false,
+      "bgp":{"allow-as in": false}
+    }
+  ]
+}
