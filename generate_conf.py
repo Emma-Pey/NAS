@@ -97,29 +97,27 @@ class AutonomousSystem:
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
-
 def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
-    data = json.load(open(path))
+    with open(path) as f:
+        data = json.load(f)
     as_map: Dict[str, AutonomousSystem] = {}
 
     for as_data in data["autonomous_systems"]:
         addr = as_data["addressing"]
-
-        # Detect IP version from addressing keys
+        
+        # --- 1. Détection de la version IP et des Pools ---
         if "ipv6_prefix" in addr:
             ip_version = 6
             ipv6_prefix = ipaddress.IPv6Network(addr["ipv6_prefix"])
             loopback_pool = ipaddress.IPv6Network(addr["loopback_pool"])
             link_pool = ipaddress.IPv6Network(addr["link_pool"])
-            inter_as_pool = ipaddress.IPv6Network(data["bgp"]["inter_as_link_pool"]) \
-                if "bgp" in data else None
+            inter_as_pool = ipaddress.IPv6Network(data["bgp"]["inter_as_link_pool"]) if "bgp" in data else None
         else:
             ip_version = 4
             ipv6_prefix = None
             loopback_pool = ipaddress.IPv4Network(addr["loopback_pool"])
             link_pool = ipaddress.IPv4Network(addr["link_pool"])
-            inter_as_pool = ipaddress.IPv4Network(data.get("bgp", {}).get("inter_as_link_pool")) \
-                if "bgp" in data else None
+            inter_as_pool = ipaddress.IPv4Network(data.get("bgp", {}).get("inter_as_link_pool")) if "bgp" in data else None
 
         as_obj = AutonomousSystem(
             name=as_data["name"],
@@ -133,11 +131,10 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             process_id=as_data.get("routing", {}).get("process_id"),
             area=as_data.get("routing", {}).get("area"),
             ospf_style=as_data.get("routing", {}).get("ospf_style", "network"),
-            ios_legacy_defaults=(
-                as_data.get("ios_legacy_defaults", False)
-                or as_data.get("platform", {}).get("ios_legacy_defaults", False)
-            ),
+            ios_legacy_defaults=as_data.get("ios_legacy_defaults", False)
         )
+
+        # --- 2. Création des Routeurs ---
         for rdata in as_data["routers"]:
             router = Router(
                 name=rdata["name"],
@@ -145,82 +142,77 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                 asn=rdata.get("router_asn", as_obj.asn),
                 neighbors=[Neighbor(**n) for n in rdata.get("neighbors", [])]
             )
-
+            
+            # Paramètres de base
             if "loopback" in rdata:
                 router.loopback = ipaddress.ip_address(rdata["loopback"])
-
             router.interface_options = rdata.get("interface_options", {})
             router.unused_interfaces = rdata.get("unused_interfaces", [])
-            router.loopback_prefix_len_v4 = rdata.get("loopback_prefix_len_v4", 32)
+            router.mpls_interfaces = rdata.get("mpls_interfaces", [])
 
-            # Optional static interfaces (for CE links or manually fixed addressing)
-            for iface_data in rdata.get("static_interfaces", []):
-                ip_obj = ipaddress.ip_address(iface_data["ip"])
-                router.interfaces[iface_data["name"]] = Interface(
-                    name=iface_data["name"],
-                    ip=ip_obj,
-                    prefix_len=iface_data["prefix_len"],
-                    ospf_area=iface_data.get("ospf_area"),
-                    ripng=iface_data.get("ripng", False),
-                    ospf_cost=iface_data.get("ospf_cost"),
-                )
+            # --- 3. Gestion des VRF (Depuis la racine de l'AS) ---
+            if "vrfs" in as_data:
+                for vrf_entry in as_data["vrfs"]:
+                    v_name = vrf_entry["name"]
+                    for mapping in vrf_entry.get("interfaces", []):
+                        if ":" in mapping:
+                            r_target, iface_target = mapping.split(":")
+                            if r_target == router.name:
+                                # On lie l'interface à la VRF
+                                router.interface_vrf_map[iface_target] = v_name
+                                # On enregistre la config de la VRF sur le routeur
+                                router.vrfs[v_name] = {
+                                    "rd": vrf_entry.get("rd_range", f"{as_obj.asn}:{v_name}"),
+                                    "rt_import": vrf_entry.get("rt_import", []),
+                                    "rt_export": vrf_entry.get("rt_export", [])
+                                }
 
-            # Optional explicit IPv4 BGP settings (used by MPLS VPN / CE-PE scenarios)
-            router.bgp_networks_v4 = rdata.get("bgp_networks_v4", [])
+            # --- 4. BGP Global & VPNv4 ---
+            # Voisins IPv4 standards
             for b in rdata.get("bgp_neighbors", []):
                 neigh_ip = b["ip"]
                 router.bgp_neighbors[neigh_ip] = b["asn"]
-                options: Dict[str, Union[str, int, bool]] = {}
-                for key in ("update_source", "allowas_in", "activate", "next_hop_self"):
-                    if key in b:
-                        options[key] = b[key]
-                router.bgp_neighbor_options[neigh_ip] = options
-
-            # Optional MPLS L3VPN settings for IPv4 PE/CE style configs
-            for vrf in rdata.get("vrfs", []):
-                vrf_name = vrf["name"]
-                router.vrfs[vrf_name] = {
-                    "rd": vrf["rd"],
-                    "rt_export": vrf.get("rt_export", []),
-                    "rt_import": vrf.get("rt_import", []),
+                router.bgp_neighbor_options[neigh_ip] = {
+                    k: b[k] for k in ("update_source", "allowas_in", "activate", "next_hop_self") if k in b
                 }
 
-            router.interface_vrf_map = rdata.get("interface_vrf_map", {})
-            router.mpls_interfaces = rdata.get("mpls_interfaces", [])
-
+            # Voisins VPNv4 (pour les PEs)
             for vpn_peer in rdata.get("bgp_vpnv4_neighbors", []):
-                neigh_ip = vpn_peer["ip"]
-                router.bgp_vpnv4_neighbors[neigh_ip] = {
+                v_ip = vpn_peer["ip"]
+                router.bgp_vpnv4_neighbors[v_ip] = {
                     "asn": vpn_peer["asn"],
                     "activate": vpn_peer.get("activate", True),
-                    "send_community_extended": vpn_peer.get("send_community_extended", False),
+                    "send_community_extended": vpn_peer.get("send_community_extended", True),
                 }
+                # Un voisin VPNv4 doit exister dans la table neighbor globale
+                if v_ip not in router.bgp_neighbors:
+                    router.bgp_neighbors[v_ip] = vpn_peer["asn"]
 
-                # Make sure the base neighbor exists in global BGP if user only declares vpnv4 entry.
-                if neigh_ip not in router.bgp_neighbors:
-                    router.bgp_neighbors[neigh_ip] = vpn_peer["asn"]
-
+            # --- 5. BGP VRF (Voisins statiques déjà déclarés) ---
             for vrf_peer in rdata.get("vrf_bgp_neighbors", []):
-                vrf_name = vrf_peer["vrf"]
-                router.vrf_bgp_neighbors.setdefault(vrf_name, []).append({
+                v_name = vrf_peer["vrf"]
+                router.vrf_bgp_neighbors.setdefault(v_name, []).append({
                     "ip": vrf_peer["ip"],
                     "asn": vrf_peer["asn"],
                     "activate": vrf_peer.get("activate", True),
                     "allowas_in": vrf_peer.get("allowas_in", False),
                 })
 
+            # --- 6. Interfaces Statiques (CE, etc.) ---
+            for iface_data in rdata.get("static_interfaces", []):
+                router.interfaces[iface_data["name"]] = Interface(
+                    name=iface_data["name"],
+                    ip=ipaddress.ip_address(iface_data["ip"]),
+                    prefix_len=iface_data["prefix_len"],
+                    ospf_area=iface_data.get("ospf_area"),
+                    ospf_cost=iface_data.get("ospf_cost")
+                )
+
             as_obj.routers[router.name] = router
+        
         as_map[as_obj.name] = as_obj
 
-    for as_name, policy_data in data.get("bgp_policies", {}).items():
-        for entry in policy_data["neighbors"]:
-            as_obj = as_map[as_name]
-            router = as_obj.routers[entry["local_router"]]
-            remote = entry["remote_router"]
-            router.bgp_policies[remote] = entry
-
     return as_map
-
 
 # ---------------------------------------------------------------------------
 # Address allocation
@@ -274,50 +266,74 @@ def build_bgp_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
                 r1, r2 = routers[i], routers[j]
                 r1.bgp_neighbors[str(r2.loopback)] = as_obj.asn
                 r2.bgp_neighbors[str(r1.loopback)] = as_obj.asn
-
 def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
             for neigh in router.neighbors:
                 if neigh.type == "inter-as":
-                    remote_as_name, remote_router_name = neigh.router.split(":")
+                    # 1. Extraction des identifiants (ex: "AS2:CE1")
+                    remote_parts = neigh.router.split(":")
+                    if len(remote_parts) < 2: 
+                        continue
+                    remote_as_name, remote_router_name = remote_parts
                     
-                    # Anti-doublon : on ne traite le lien que du côté du "petit" nom de routeur
+                    # 2. On ne traite le lien qu'une seule fois (côté PE par exemple)
                     if remote_router_name > router.name:
+                        if remote_as_name not in as_map: 
+                            continue
                         remote_as = as_map[remote_as_name]
                         remote_router = remote_as.routers[remote_router_name]
 
-                        # --- CHOIX DU POOL DE L'AS1 ---
-                        # Ici, on décide d'utiliser le pool de l'AS courant (as_obj)
-                        # On appelle allocate_link_prefix sur as_obj, mais SANS l'option inter_as
+                        # 3. Allocation d'un subnet /30 ou /64
                         link_prefix = as_obj.allocate_link_prefix(inter_as=False)
-                        
-                        r_ip = link_prefix[1]
-                        n_ip = link_prefix[2]
-
+                        r_ip = link_prefix[1] # IP pour le routeur local (ex: PE)
+                        n_ip = link_prefix[2] # IP pour le routeur distant (ex: CE)
                         p_len = 30 if as_obj.ip_version == 4 else 64
 
-                        # Config du routeur local (ex: PE1 dans AS1)
+                        # 4. Configuration des interfaces physiques (Local)
                         router.interfaces[neigh.interface] = Interface(
-                            name=neigh.interface,
-                            ip=r_ip,
-                            prefix_len=p_len,
-                            ospf_area=None # Généralement pas d'OSPF sur un lien Inter-AS
+                            name=neigh.interface, 
+                            ip=r_ip, 
+                            prefix_len=p_len
                         )
+                        
+                        # 5. Configuration des interfaces physiques (Distant)
+                        # On cherche l'interface sur le CE qui pointe vers nous
+                        try:
+                            remote_iface_name = next(
+                                n.interface for n in remote_router.neighbors 
+                                if n.router == f"{as_obj.name}:{router.name}"
+                            )
+                            remote_router.interfaces[remote_iface_name] = Interface(
+                                name=remote_iface_name, 
+                                ip=n_ip, 
+                                prefix_len=p_len
+                            )
+                        except StopIteration:
+                            print(f"Erreur : Pas de lien retour trouvé sur {remote_router_name} vers {router.name}")
+                            continue
 
-                        # Config du routeur distant (ex: CE1 dans AS2)
-                        remote_iface_name = next(n.interface for n in remote_router.neighbors if n.router == f"{as_obj.name}:{router.name}")
-                        remote_router.interfaces[remote_iface_name] = Interface(
-                            name=remote_iface_name,
-                            ip=n_ip,
-                            prefix_len=p_len,
-                            ospf_area=None
-                        )
+                        # 6. LOGIQUE BGP POUR LE ROUTEUR LOCAL (PE)
+                        vrf_name = router.interface_vrf_map.get(neigh.interface)
+                        
+                        if vrf_name:
+                            # Cas PE : On place le voisin dans l'Address-Family VRF
+                            peer_config = {
+                                "ip": str(n_ip),
+                                "asn": remote_as.asn,
+                                "activate": True
+                            }
+                            router.vrf_bgp_neighbors.setdefault(vrf_name, []).append(peer_config)
+                            
+                            # On définit aussi le neighbor en global pour la session TCP
+                            router.bgp_neighbors[str(n_ip)] = remote_as.asn
+                        else:
+                            # Cas classique ou CE : Table globale
+                            router.bgp_neighbors[str(n_ip)] = remote_as.asn
 
-                        # Appairage BGP
-                        router.bgp_neighbors[str(n_ip)] = remote_as.asn
-                        remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn
-# ---------------------------------------------------------------------------
+                        # 7. LOGIQUE BGP POUR LE ROUTEUR DISTANT (CE)
+                        # Le CE n'a généralement pas de VRF, il voit juste le PE comme un voisin eBGP
+                        remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn# ---------------------------------------------------------------------------
 # Config generation
 # ---------------------------------------------------------------------------
 
@@ -336,6 +352,12 @@ def _wildcard(prefix_len: int) -> str:
 
 def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
     lines = []
+
+    # Find inter-AS interface (if any)
+    inter_as_iface = []
+    for neigh in router.neighbors:
+        if neigh.type == "inter-as":
+            inter_as_iface.append(neigh.interface)
 
     lines += [
         "!",
@@ -391,7 +413,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             "interface Loopback0",
             f" ip address {router.loopback} {_mask(router.loopback_prefix_len_v4)}",
         ]
-        if as_obj.protocol == "ospf" and as_obj.ospf_style == "interface":
+        if as_obj.protocol == "ospf":
             lines.append(f" ip ospf {as_obj.process_id} area {as_obj.area}")
         lines += [
             " no shutdown",
@@ -408,9 +430,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             iface_lines.append(f" ip address {iface.ip} {_mask(iface.prefix_len)}")
             if (
                 as_obj.protocol == "ospf"
-                and as_obj.ospf_style == "interface"
                 and iface.ospf_area is not None
-                and iface.name not in router.interface_vrf_map
             ):
                 iface_lines.append(f" ip ospf {as_obj.process_id} area {iface.ospf_area}")
             if iface.name in router.mpls_interfaces:
@@ -458,21 +478,25 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             loopback_idx = lines.index("interface Loopback0")
             lines = lines[:loopback_idx] + vrf_lines + lines[loopback_idx:]
 
+
+
         # OSPFv2
         if as_obj.protocol == "ospf":
             lines += [
                 f"router ospf {as_obj.process_id}",
                 f" router-id {rid}",
             ]
+            if router.role == "PE" and inter_as_iface:
+                for int in inter_as_iface:
+                    lines.append(f" passive-interface {int}")
             if as_obj.ospf_style == "network":
-                lines.append(f" network {router.loopback} 0.0.0.0 area {as_obj.area}")
+                #lines.append(f" network {router.loopback} 0.0.0.0 area {as_obj.area}")
                 for iface in router.interfaces.values():
                     if iface.ospf_area is None:
                         continue
                     net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
                     lines.append(f" network {net.network_address} {_wildcard(iface.prefix_len)} area {iface.ospf_area}")
             lines.append("!")
-
         # Optional IPv4 BGP block (manual-like CE/PE configs)
         if (
             router.bgp_neighbors
@@ -487,9 +511,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
                 lines.append(f" neighbor {neigh_ip} remote-as {neigh_asn}")
                 options = router.bgp_neighbor_options.get(neigh_ip, {})
-                update_source = options.get("update_source")
-                if update_source:
-                    lines.append(f" neighbor {neigh_ip} update-source {update_source}")
+                if neigh_asn == router.asn:
+                    lines.append(f" neighbor {neigh_ip} update-source Loopback0")
                 if "allowas_in" in options:
                     allowas_value = options["allowas_in"]
                     if isinstance(allowas_value, bool):

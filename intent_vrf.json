@@ -51,14 +51,14 @@
           "rd_range": "1:200-299",
           "rt_import": ["1:20", "1:30"],
           "rt_export": ["1:20"],
-          "interfaces": ["P1:g2/0"]
+          "interfaces": ["PE1:g2/0"]
         },
         {
           "name": "PINK",
           "rd_range": "1:300-399",
           "rt_import": ["1:10", "1:20", "1:30"],
           "rt_export": ["1:30"],
-          "interfaces": ["PE1:g2/0"]
+          "interfaces": ["P1:g2/0"]
         }
       ]
     },
