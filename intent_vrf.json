@@ -13,14 +13,14 @@
       "routing": { "protocol": "ospf", "process_id": 1, "area": 0 },
       "routers": [
         { "name": "PE1", "role": "PE", "neighbors": [
-            { "router": "AS2:CE1", "type": "inter-as", "interface": "f0/0" },
-            { "router": "AS4:CE3", "type": "inter-as", "interface": "g2/0" },
+            { "router": "AS2:CE1", "type": "inter-as", "interface": "f0/0", "vrf": "BLACK" },
+            { "router": "AS4:CE3", "type": "inter-as", "interface": "g2/0", "vrf": "BLUE" },
             { "router": "P1", "type": "intra-as", "interface": "g1/0" }
           ] 
         },
         { "name": "P1", "role": "PE", "neighbors": [
             { "router": "PE1", "type": "intra-as", "interface": "f0/0" },
-            { "router": "AS5:CE5", "type": "inter-as", "interface": "g2/0" },
+            { "router": "AS5:CE5", "type": "inter-as", "interface": "g2/0", "vrf": "PINK" },
             { "router": "P2", "type": "intra-as", "interface": "g1/0" }
           ]
         },
@@ -31,8 +31,8 @@
         },
         { "name": "PE2", "role": "PE", "neighbors": [
             { "router": "P2", "type": "intra-as", "interface": "f0/0" },
-            { "router": "AS3:CE2", "type": "inter-as", "interface": "g1/0" },
-            { "router": "AS4:CE4", "type": "inter-as", "interface": "g2/0" }
+            { "router": "AS3:CE2", "type": "inter-as", "interface": "g1/0", "vrf": "BLACK" },
+            { "router": "AS4:CE4", "type": "inter-as", "interface": "g2/0", "vrf": "BLUE" }
           ]
         }
       ],
@@ -41,24 +41,21 @@
       "vrfs": [
         {
           "name": "BLACK",
-          "rd_range": "1:100-199",
+          "rd_base": "100",
           "rt_import": ["1:10", "1:30"],
-          "rt_export": ["1:10"],
-          "interfaces": ["PE1:f0/0", "PE2:g1/0"]
+          "rt_export": ["1:10"]
         },
         {
           "name": "BLUE",
-          "rd_range": "1:200-299",
+          "rd_base": "200",
           "rt_import": ["1:20", "1:30"],
-          "rt_export": ["1:20"],
-          "interfaces": ["PE1:g2/0"]
+          "rt_export": ["1:20"]
         },
         {
           "name": "PINK",
-          "rd_range": "1:300-399",
+          "rd_base": "300",
           "rt_import": ["1:10", "1:20", "1:30"],
-          "rt_export": ["1:30"],
-          "interfaces": ["P1:g2/0"]
+          "rt_export": ["1:30"]
         }
       ]
     },

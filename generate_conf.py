@@ -28,6 +28,7 @@ class Neighbor:
     router: str
     type: str
     interface: str
+    vrf: Optional[str] = None
     ospf_cost: Optional[int] = None
 
 
@@ -150,7 +151,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             router.unused_interfaces = rdata.get("unused_interfaces", [])
             router.mpls_interfaces = rdata.get("mpls_interfaces", [])
 
-            # --- 3. Gestion des VRF (Depuis la racine de l'AS) ---
+            """ # --- 3. Gestion des VRF (Depuis la racine de l'AS) ---
             if "vrfs" in as_data:
                 for vrf_entry in as_data["vrfs"]:
                     v_name = vrf_entry["name"]
@@ -162,10 +163,33 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                                 router.interface_vrf_map[iface_target] = v_name
                                 # On enregistre la config de la VRF sur le routeur
                                 router.vrfs[v_name] = {
-                                    "rd": vrf_entry.get("rd_range", f"{as_obj.asn}:{v_name}"),
+                                    "rd": f"{as_obj.asn}:{int(vrf_entry.get('rd_base', 0))+int(router.loopback.split('.')[-1])}", # RD generation based on AS, base and router ID => unique si pas deux mêmes vrf sur le même routeur
                                     "rt_import": vrf_entry.get("rt_import", []),
                                     "rt_export": vrf_entry.get("rt_export", [])
-                                }
+                                }"""
+
+            # --- 3. Gestion des VRF (Nouvelle Logique) ---
+            # On crée un dictionnaire des définitions de VRF pour un accès rapide
+            vrf_definitions = {v["name"]: v for v in as_data.get("vrfs", [])}
+
+            for neighbor in router.neighbors:
+                # Si une VRF est déclarée sur cette interface (neighbor)
+                if hasattr(neighbor, 'vrf') and neighbor.vrf:
+                    v_name = neighbor.vrf
+                    
+                    # On lie l'interface à la VRF pour la configuration d'interface
+                    router.interface_vrf_map[neighbor.interface] = v_name
+                    
+                    # Si on a les détails de la VRF dans la config de l'AS
+                    if v_name in vrf_definitions:
+                        v_def = vrf_definitions[v_name]
+                        
+                        router.vrfs[v_name] = {
+                            "rd": f"{as_obj.asn}:{int(v_def.get('rd_base', 0))}", # RD generation based on AS, base and router ID => unique si pas deux mêmes vrf sur le même routeur
+                            "rt_import": v_def.get("rt_import", []),
+                            "rt_export": v_def.get("rt_export", [])
+                        }
+            print(f"Router {router.name} VRF Config: {router.vrfs}, Interface-VRF Map: {router.interface_vrf_map}")
 
             # --- 4. BGP Global & VPNv4 ---
             # Voisins IPv4 standards
@@ -224,6 +248,9 @@ def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:
         for router in as_obj.routers.values():
             if router.loopback is None:
                 router.loopback = as_obj.allocate_loopback()
+                # on peut maintenant configurer les RD des VRF basés sur le loopback
+                for vrf_name, vrf_data in router.vrfs.items():
+                    vrf_data["rd"] = f"{as_obj.asn}:{int(vrf_data["rd"].split(":")[1]) + int(str(router.loopback).split('.')[-1])}" #c'est pas ouf mais ça fonctionne
 
     # Intra-AS links
     for as_obj in as_map.values():
@@ -266,6 +293,7 @@ def build_bgp_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
                 r1, r2 = routers[i], routers[j]
                 r1.bgp_neighbors[str(r2.loopback)] = as_obj.asn
                 r2.bgp_neighbors[str(r1.loopback)] = as_obj.asn
+
 def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
