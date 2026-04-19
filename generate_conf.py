@@ -68,6 +68,7 @@ class AutonomousSystem:
     area: Optional[int] = None
     ospf_style: str = "network"
     ios_legacy_defaults: bool = False
+    mpls: bool = False
     routers: Dict[str, Router] = field(default_factory=dict)
 
     def allocate_loopback(self) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
@@ -132,7 +133,8 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             process_id=as_data.get("routing", {}).get("process_id"),
             area=as_data.get("routing", {}).get("area"),
             ospf_style=as_data.get("routing", {}).get("ospf_style", "network"),
-            ios_legacy_defaults=as_data.get("ios_legacy_defaults", False)
+            ios_legacy_defaults=as_data.get("ios_legacy_defaults", False),
+            mpls=as_data.get("mpls", False),
         )
 
         # --- 2. Création des Routeurs ---
@@ -145,11 +147,11 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             )
             
             # Paramètres de base
-            if "loopback" in rdata:
+            """if "loopback" in rdata:
                 router.loopback = ipaddress.ip_address(rdata["loopback"])
             router.interface_options = rdata.get("interface_options", {})
             router.unused_interfaces = rdata.get("unused_interfaces", [])
-            router.mpls_interfaces = rdata.get("mpls_interfaces", [])
+            router.mpls_interfaces = rdata.get("mpls_interfaces", [])"""
 
             """ # --- 3. Gestion des VRF (Depuis la racine de l'AS) ---
             if "vrfs" in as_data:
@@ -258,6 +260,8 @@ def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:
             for neigh in router.neighbors:
                 if neigh.type == "intra-as":
                     neigh_router = as_obj.routers[neigh.router]
+                    if as_obj.mpls:
+                        router.mpls_interfaces.append(neigh.interface) ### à vérifier si ça fonctionne
                     if neigh.interface not in router.interfaces:
                         link_prefix = as_obj.allocate_link_prefix(inter_as=False)
                         r_ip = link_prefix[1]
@@ -420,12 +424,12 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             "!",
         ]
 
-    if as_obj.ip_version == 4 and router.mpls_interfaces:
+    """if as_obj.ip_version == 4 and router.mpls_interfaces:
         lines += [
             "mpls label protocol ldp",
             "mpls ldp router-id Loopback0 force",
             "!",
-        ]
+        ]"""  ##?????
 
     lines += [
         "ip tcp synwait-time 5",
