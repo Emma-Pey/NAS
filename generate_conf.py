@@ -544,9 +544,9 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             ]
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
                 lines.append(f" neighbor {neigh_ip} remote-as {neigh_asn}")
-                """options = router.bgp_neighbor_options.get(neigh_ip, {})
                 if neigh_asn == router.asn:
                     lines.append(f" neighbor {neigh_ip} update-source Loopback0")
+                """options = router.bgp_neighbor_options.get(neigh_ip, {})
                 if "allowas_in" in options:
                     allowas_value = options["allowas_in"]
                     if isinstance(allowas_value, bool):
