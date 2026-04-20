@@ -70,6 +70,7 @@ class AutonomousSystem:
     ios_legacy_defaults: bool = False
     mpls: bool = False
     routers: Dict[str, Router] = field(default_factory=dict)
+    allow_as_in: bool = False
 
     def allocate_loopback(self) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
         used = {r.loopback for r in self.routers.values() if r.loopback}
@@ -135,6 +136,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             ospf_style=as_data.get("routing", {}).get("ospf_style", "network"),
             ios_legacy_defaults=as_data.get("ios_legacy_defaults", False),
             mpls=as_data.get("mpls", False),
+            allow_as_in=as_data.get("bgp", {}).get("allow-as in", False),
         )
 
         # --- 2. Création des Routeurs ---
@@ -195,12 +197,12 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
 
             # --- 4. BGP Global & VPNv4 ---
             # Voisins IPv4 standards
-            for b in rdata.get("bgp_neighbors", []):
+            """for b in rdata.get("bgp_neighbors", []):
                 neigh_ip = b["ip"]
                 router.bgp_neighbors[neigh_ip] = b["asn"]
                 router.bgp_neighbor_options[neigh_ip] = {
                     k: b[k] for k in ("update_source", "allowas_in", "activate", "next_hop_self") if k in b
-                }
+                }""" #??
 
             # Voisins VPNv4 (pour les PEs)
             for vpn_peer in rdata.get("bgp_vpnv4_neighbors", []):
@@ -221,7 +223,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                     "ip": vrf_peer["ip"],
                     "asn": vrf_peer["asn"],
                     "activate": vrf_peer.get("activate", True),
-                    "allowas_in": vrf_peer.get("allowas_in", False),
+                    #"allowas_in": vrf_peer.get("allowas_in", False), #??
                 })
 
             # --- 6. Interfaces Statiques (CE, etc.) ---
@@ -518,16 +520,16 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 f"router ospf {as_obj.process_id}",
                 f" router-id {rid}",
             ]
-            if router.role == "PE" and inter_as_iface:
+            """if router.role == "PE" and inter_as_iface:
                 for int in inter_as_iface:
-                    lines.append(f" passive-interface {int}")
+                    lines.append(f" passive-interface {int}") #utile si ospf pas activé sur les liens inter-as ??
             if as_obj.ospf_style == "network":
                 #lines.append(f" network {router.loopback} 0.0.0.0 area {as_obj.area}")
                 for iface in router.interfaces.values():
                     if iface.ospf_area is None:
                         continue
                     net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
-                    lines.append(f" network {net.network_address} {_wildcard(iface.prefix_len)} area {iface.ospf_area}")
+                    lines.append(f" network {net.network_address} {_wildcard(iface.prefix_len)} area {iface.ospf_area}") """ #à quoi ça sert ??
             lines.append("!")
         # Optional IPv4 BGP block (manual-like CE/PE configs)
         if (
@@ -542,7 +544,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             ]
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
                 lines.append(f" neighbor {neigh_ip} remote-as {neigh_asn}")
-                options = router.bgp_neighbor_options.get(neigh_ip, {})
+                """options = router.bgp_neighbor_options.get(neigh_ip, {})
                 if neigh_asn == router.asn:
                     lines.append(f" neighbor {neigh_ip} update-source Loopback0")
                 if "allowas_in" in options:
@@ -551,12 +553,12 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                         if allowas_value:
                             lines.append(f" neighbor {neigh_ip} allowas-in")
                     else:
-                        lines.append(f" neighbor {neigh_ip} allowas-in {allowas_value}")
+                        lines.append(f" neighbor {neigh_ip} allowas-in {allowas_value}")""" ## ??
 
             lines += [" !", " address-family ipv4"]
-            for network in router.bgp_networks_v4:
-                lines.append(f"  network {network}")
-            for neigh_ip in router.bgp_neighbors.keys():
+            """for network in router.bgp_networks_v4:
+                lines.append(f"  network {network}")""" # ??
+            for neigh_ip, neigh_asn in router.bgp_neighbors.items():
                 options = router.bgp_neighbor_options.get(neigh_ip, {})
                 if options.get("activate", True):
                     lines.append(f"  neighbor {neigh_ip} activate")
@@ -564,6 +566,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                     lines.append(f"  no neighbor {neigh_ip} activate")
                 if options.get("next_hop_self"):
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
+                if as_obj.allow_as_in and neigh_asn == router.asn:
+                    lines.append(f"  neighbor {neigh_ip} allowas-in")
             lines += [" exit-address-family"]
 
             if router.bgp_vpnv4_neighbors:
