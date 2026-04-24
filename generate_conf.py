@@ -149,11 +149,13 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             )
             
             # Paramètres de base
-            """if "loopback" in rdata:
+            if "loopback" in rdata:
                 router.loopback = ipaddress.ip_address(rdata["loopback"])
+            router.loopback_prefix_len_v4 = rdata.get("loopback_prefix_len_v4", 32)
             router.interface_options = rdata.get("interface_options", {})
             router.unused_interfaces = rdata.get("unused_interfaces", [])
-            router.mpls_interfaces = rdata.get("mpls_interfaces", [])"""
+            router.mpls_interfaces = rdata.get("mpls_interfaces", [])
+            router.bgp_networks_v4 = rdata.get("bgp_networks_v4", [])
 
             """ # --- 3. Gestion des VRF (Depuis la racine de l'AS) ---
             if "vrfs" in as_data:
@@ -193,16 +195,27 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                             "rt_import": v_def.get("rt_import", []),
                             "rt_export": v_def.get("rt_export", [])
                         }
-            print(f"Router {router.name} VRF Config: {router.vrfs}, Interface-VRF Map: {router.interface_vrf_map}")
+            # --- 3b. VRF par routeur (style intent_basic.json) ---
+            for vrf_entry in rdata.get("vrfs", []):
+                v_name = vrf_entry["name"]
+                if v_name not in router.vrfs:
+                    router.vrfs[v_name] = {
+                        "rd": vrf_entry["rd"],
+                        "rt_import": vrf_entry.get("rt_import", []),
+                        "rt_export": vrf_entry.get("rt_export", []),
+                    }
+
+            for iface_name, vrf_name in rdata.get("interface_vrf_map", {}).items():
+                router.interface_vrf_map[iface_name] = vrf_name
 
             # --- 4. BGP Global & VPNv4 ---
-            # Voisins IPv4 standards
-            """for b in rdata.get("bgp_neighbors", []):
+            # Voisins IPv4 standards (CE eBGP, PE iBGP manuel)
+            for b in rdata.get("bgp_neighbors", []):
                 neigh_ip = b["ip"]
                 router.bgp_neighbors[neigh_ip] = b["asn"]
-                router.bgp_neighbor_options[neigh_ip] = {
-                    k: b[k] for k in ("update_source", "allowas_in", "activate", "next_hop_self") if k in b
-                }""" #??
+                opts = {k: b[k] for k in ("allowas_in", "activate", "next_hop_self") if k in b}
+                if opts:
+                    router.bgp_neighbor_options[neigh_ip] = opts
 
             # Voisins VPNv4 (pour les PEs)
             for vpn_peer in rdata.get("bgp_vpnv4_neighbors", []):
@@ -262,8 +275,8 @@ def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:
             for neigh in router.neighbors:
                 if neigh.type == "intra-as":
                     neigh_router = as_obj.routers[neigh.router]
-                    if as_obj.mpls:
-                        router.mpls_interfaces.append(neigh.interface) ### à vérifier si ça fonctionne
+                    if as_obj.mpls and neigh.interface not in router.mpls_interfaces:
+                        router.mpls_interfaces.append(neigh.interface)
                     if neigh.interface not in router.interfaces:
                         link_prefix = as_obj.allocate_link_prefix(inter_as=False)
                         r_ip = link_prefix[1]
@@ -293,12 +306,34 @@ def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:
 
 def build_bgp_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
+        if not as_obj.mpls:
+            continue  # seul le cœur MPLS a besoin d'un full-mesh iBGP
         routers = list(as_obj.routers.values())
         for i in range(len(routers)):
             for j in range(i + 1, len(routers)):
                 r1, r2 = routers[i], routers[j]
                 r1.bgp_neighbors[str(r2.loopback)] = as_obj.asn
                 r2.bgp_neighbors[str(r1.loopback)] = as_obj.asn
+
+def build_vpnv4_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
+    for as_obj in as_map.values():
+        if not as_obj.mpls:
+            continue
+        pe_routers = [r for r in as_obj.routers.values() if r.role.lower() == "pe"]
+        for r1 in pe_routers:
+            for r2 in pe_routers:
+                if r1 is r2:
+                    continue
+                peer_ip = str(r2.loopback)
+                # PE-PE : pas d'activation en IPv4 unicast, uniquement VPNv4
+                r1.bgp_neighbor_options.setdefault(peer_ip, {})["activate"] = False
+                if peer_ip not in r1.bgp_vpnv4_neighbors:
+                    r1.bgp_vpnv4_neighbors[peer_ip] = {
+                        "asn": as_obj.asn,
+                        "activate": True,
+                        "send_community_extended": True,
+                    }
+
 
 def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
@@ -365,9 +400,22 @@ def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
                             # Cas classique ou CE : Table globale
                             router.bgp_neighbors[str(n_ip)] = remote_as.asn
 
-                        # 7. LOGIQUE BGP POUR LE ROUTEUR DISTANT (CE)
-                        # Le CE n'a généralement pas de VRF, il voit juste le PE comme un voisin eBGP
-                        remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn# ---------------------------------------------------------------------------
+                        # 7. LOGIQUE BGP POUR LE ROUTEUR DISTANT
+                        # Si le routeur distant (ex: PE) a une VRF sur l'interface qui nous connecte,
+                        # la session doit aller dans l'address-family VRF, pas dans la table globale
+                        remote_vrf = remote_router.interface_vrf_map.get(remote_iface_name)
+                        if remote_vrf:
+                            remote_router.vrf_bgp_neighbors.setdefault(remote_vrf, []).append({
+                                "ip": str(r_ip),
+                                "asn": as_obj.asn,
+                                "activate": True
+                            })
+                            remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn  # pour la session TCP
+                        else:
+                            remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn
+
+
+# ---------------------------------------------------------------------------
 # Config generation
 # ---------------------------------------------------------------------------
 
@@ -426,12 +474,12 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             "!",
         ]
 
-    """if as_obj.ip_version == 4 and router.mpls_interfaces:
+    if as_obj.ip_version == 4 and router.mpls_interfaces:
         lines += [
             "mpls label protocol ldp",
             "mpls ldp router-id Loopback0 force",
             "!",
-        ]"""  ##?????
+        ]
 
     lines += [
         "ip tcp synwait-time 5",
@@ -555,10 +603,20 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                     else:
                         lines.append(f" neighbor {neigh_ip} allowas-in {allowas_value}")""" ## ??
 
+            # IPs des CE liées à une VRF : présentes dans bgp_neighbors pour TCP, mais
+            # ne doivent pas être activées dans la table IPv4 globale
+            vrf_bound_ips = {peer["ip"] for peers in router.vrf_bgp_neighbors.values() for peer in peers}
+
             lines += [" !", " address-family ipv4"]
-            """for network in router.bgp_networks_v4:
-                lines.append(f"  network {network}")""" # ??
+            for network in router.bgp_networks_v4:
+                if "/" in network:
+                    net = ipaddress.IPv4Network(network, strict=False)
+                    lines.append(f"  network {net.network_address} mask {net.netmask}")
+                else:
+                    lines.append(f"  network {network}")
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
+                if neigh_ip in vrf_bound_ips:
+                    continue  # géré dans l'address-family VRF uniquement
                 options = router.bgp_neighbor_options.get(neigh_ip, {})
                 if options.get("activate", True):
                     lines.append(f"  neighbor {neigh_ip} activate")
@@ -566,7 +624,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                     lines.append(f"  no neighbor {neigh_ip} activate")
                 if options.get("next_hop_self"):
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
-                if as_obj.allow_as_in and neigh_asn == router.asn:
+                if options.get("allowas_in") or (as_obj.allow_as_in and neigh_asn == router.asn):
                     lines.append(f"  neighbor {neigh_ip} allowas-in")
             lines += [" exit-address-family"]
 
@@ -752,6 +810,7 @@ def main(intent_path: str) -> None:
 
     allocate_addresses(as_map)
     build_bgp_fullmesh(as_map)
+    build_vpnv4_fullmesh(as_map)
     build_inter_as_neighbors(as_map)
 
     for as_obj in as_map.values():
