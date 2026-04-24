@@ -151,13 +151,13 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             )
             
             # Paramètres de base
-            if "loopback" in rdata:
+            """if "loopback" in rdata:
                 router.loopback = ipaddress.ip_address(rdata["loopback"])
             router.loopback_prefix_len_v4 = rdata.get("loopback_prefix_len_v4", 32)
             router.interface_options = rdata.get("interface_options", {})
             router.unused_interfaces = rdata.get("unused_interfaces", [])
             router.mpls_interfaces = rdata.get("mpls_interfaces", [])
-            router.bgp_networks_v4 = rdata.get("bgp_networks_v4", [])
+            router.bgp_networks_v4 = rdata.get("bgp_networks_v4", [])""" #??
 
             """ # --- 3. Gestion des VRF (Depuis la racine de l'AS) ---
             if "vrfs" in as_data:
@@ -494,9 +494,12 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
 
         # Loopback
         lines += [
-            "interface Loopback0",
-            f" ip address {router.loopback} {_mask(router.loopback_prefix_len_v4)}",
+            "interface Loopback0"
         ]
+        if router.role != "CE":
+            lines += [f" ip address {router.loopback} {_mask(router.loopback_prefix_len_v4)}"]
+        else:
+            lines += [f" ip address {router.loopback} {as_obj.loopback_pool.netmask}"] 
         if as_obj.protocol == "ospf":
             lines.append(f" ip ospf {as_obj.process_id} area {as_obj.area}")
         lines += [
@@ -626,8 +629,10 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                     lines.append(f"  no neighbor {neigh_ip} activate")
                 if options.get("next_hop_self"):
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
-                if options.get("allowas_in") or (as_obj.allow_as_in and neigh_asn == router.asn):
-                    lines.append(f"  neighbor {neigh_ip} allowas-in")
+                if router.role == "CE":
+                    lines.append(f"  network {as_obj.loopback_pool.network_address} mask {as_obj.loopback_pool.netmask}")
+                if options.get("allowas_in") or as_obj.allow_as_in:
+                    lines.append(f"  neighbor {neigh_ip} allowas-in") #ça fonctionne ici parce qu'il a qu'un seul voisin, sinon ça mettrait cette ligne plusieurs fois ??
             lines += [" exit-address-family"]
 
             if router.bgp_vpnv4_neighbors:
