@@ -35,6 +35,7 @@ class Neighbor:
 @dataclass
 class Router:
     name: str
+    number: int
     role: str
     asn: int
     neighbors: List[Neighbor]
@@ -143,6 +144,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
         for rdata in as_data["routers"]:
             router = Router(
                 name=rdata["name"],
+                number=rdata["number"],
                 role=rdata["role"],
                 asn=rdata.get("router_asn", as_obj.asn),
                 neighbors=[Neighbor(**n) for n in rdata.get("neighbors", [])]
@@ -804,9 +806,9 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
 def main(intent_path: str) -> None:
     as_map = parse_intent(intent_path)
 
-    if os.path.exists("configs"):
-        shutil.rmtree("configs")
-    os.makedirs("configs", exist_ok=True)
+    if os.path.exists("configs_bon_nommage"):
+        shutil.rmtree("configs_bon_nommage")
+    os.makedirs("configs_bon_nommage", exist_ok=True)
 
     allocate_addresses(as_map)
     build_bgp_fullmesh(as_map)
@@ -816,7 +818,7 @@ def main(intent_path: str) -> None:
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
             cfg = generate_router_config(router, as_obj)
-            fname = f"configs/{router.name}_startup-config.cfg"
+            fname = f"configs_bon_nommage/i{router.number}_startup-config.cfg"
             with open(fname, "w") as f:
                 f.write(cfg)
             print(f"Generated {fname}")

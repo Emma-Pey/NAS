@@ -12,24 +12,24 @@
       },
       "routing": { "protocol": "ospf", "process_id": 1, "area": 0 },
       "routers": [
-        { "name": "PE1", "role": "PE", "neighbors": [
+        { "name": "PE1", "number": 1, "role": "PE", "neighbors": [
             { "router": "AS2:CE1", "type": "inter-as", "interface": "FastEthernet0/0", "vrf": "BLACK" },
             { "router": "AS4:CE3", "type": "inter-as", "interface": "GigabitEthernet2/0", "vrf": "BLUE" },
             { "router": "P1", "type": "intra-as", "interface": "GigabitEthernet1/0" }
           ] 
         },
-        { "name": "P1", "role": "PE", "neighbors": [
+        { "name": "P1", "number": 2, "role": "PE", "neighbors": [
             { "router": "PE1", "type": "intra-as", "interface": "FastEthernet0/0" },
             { "router": "AS5:CE5", "type": "inter-as", "interface": "GigabitEthernet2/0", "vrf": "PINK" },
             { "router": "P2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
           ]
         },
-        { "name": "P2", "role": "P", "neighbors": [
+        { "name": "P2", "number": 3, "role": "P", "neighbors": [
             { "router": "P1", "type": "intra-as", "interface": "FastEthernet0/0" },
             { "router": "PE2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
           ]
         },
-        { "name": "PE2", "role": "PE", "neighbors": [
+        { "name": "PE2", "number": 4, "role": "PE", "neighbors": [
             { "router": "P2", "type": "intra-as", "interface": "FastEthernet0/0" },
             { "router": "AS3:CE2", "type": "inter-as", "interface": "GigabitEthernet1/0", "vrf": "BLACK" },
             { "router": "AS4:CE4", "type": "inter-as", "interface": "GigabitEthernet2/0", "vrf": "BLUE" }
@@ -64,7 +64,7 @@
       "asn": 2,
       "addressing": { "loopback_pool": "192.168.11.0/24", "link_pool": "10.0.1.0/24" },
       "routers": [
-        { "name": "CE1", "role": "CE", "neighbors": [
+        { "name": "CE1", "number": 5, "role": "CE", "neighbors": [
             { "router": "AS1:PE1", "type": "inter-as", "interface": "FastEthernet0/0" }
           ] 
         }
@@ -77,7 +77,7 @@
       "asn": 3,
       "addressing": { "loopback_pool": "192.168.12.0/24", "link_pool": "10.0.2.0/24" },
       "routers": [
-        { "name": "CE2", "role": "CE", "neighbors": [
+        { "name": "CE2", "number": 6, "role": "CE", "neighbors": [
             { "router": "AS1:PE2", "type": "inter-as", "interface": "FastEthernet0/0" }
           ] 
         }
@@ -90,11 +90,11 @@
       "asn": 4,
       "addressing": { "loopback_pool": "192.168.21.0/24", "link_pool": "10.0.3.0/24" },
       "routers": [
-        { "name": "CE3", "role": "CE", "neighbors": [
+        { "name": "CE3", "number": 7, "role": "CE", "neighbors": [
             { "router": "AS1:PE1", "type": "inter-as", "interface": "FastEthernet0/0" }
           ] 
         },
-        { "name": "CE4", "role": "CE", "neighbors": [
+        { "name": "CE4", "number": 8, "role": "CE", "neighbors": [
             { "router": "AS1:PE2", "type": "inter-as", "interface": "FastEthernet0/0" }
           ] 
         }
@@ -107,7 +107,7 @@
       "asn": 5,
       "addressing": { "loopback_pool": "192.168.22.0/24", "link_pool": "10.0.4.0/24" },
       "routers": [
-        { "name": "CE5", "role": "CE", "neighbors": [
+        { "name": "CE5", "number": 9, "role": "CE", "neighbors": [
             { "router": "AS1:P1", "type": "inter-as", "interface": "FastEthernet0/0" }
           ] 
         }
