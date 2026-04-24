@@ -43,7 +43,7 @@ class Router:
     interfaces: Dict[str, Interface] = field(default_factory=dict)
     bgp_neighbors: Dict[str, int] = field(default_factory=dict)
     bgp_policies: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    bgp_neighbor_options: Dict[str, Dict[str, Union[str, int, bool]]] = field(default_factory=dict)
+    #bgp_neighbor_options: Dict[str, Dict[str, Union[str, int, bool]]] = field(default_factory=dict) #??
     bgp_networks_v4: List[str] = field(default_factory=list)
     vrfs: Dict[str, Dict[str, Union[str, List[str]]]] = field(default_factory=dict)
     interface_vrf_map: Dict[str, str] = field(default_factory=dict)
@@ -212,12 +212,12 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
 
             # --- 4. BGP Global & VPNv4 ---
             # Voisins IPv4 standards (CE eBGP, PE iBGP manuel)
-            for b in rdata.get("bgp_neighbors", []):
+            """for b in rdata.get("bgp_neighbors", []):
                 neigh_ip = b["ip"]
                 router.bgp_neighbors[neigh_ip] = b["asn"]
                 opts = {k: b[k] for k in ("allowas_in", "activate", "next_hop_self") if k in b}
                 if opts:
-                    router.bgp_neighbor_options[neigh_ip] = opts
+                    router.bgp_neighbor_options[neigh_ip] = opts""" #??
 
             # Voisins VPNv4 (pour les PEs)
             for vpn_peer in rdata.get("bgp_vpnv4_neighbors", []):
@@ -328,7 +328,7 @@ def build_vpnv4_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
                     continue
                 peer_ip = str(r2.loopback)
                 # PE-PE : pas d'activation en IPv4 unicast, uniquement VPNv4
-                r1.bgp_neighbor_options.setdefault(peer_ip, {})["activate"] = False
+                #r1.bgp_neighbor_options.setdefault(peer_ip, {})["activate"] = False #??
                 if peer_ip not in r1.bgp_vpnv4_neighbors:
                     r1.bgp_vpnv4_neighbors[peer_ip] = {
                         "asn": as_obj.asn,
@@ -613,25 +613,28 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             vrf_bound_ips = {peer["ip"] for peers in router.vrf_bgp_neighbors.values() for peer in peers}
 
             lines += [" !", " address-family ipv4"]
-            for network in router.bgp_networks_v4:
+            """for network in router.bgp_networks_v4: 
                 if "/" in network:
                     net = ipaddress.IPv4Network(network, strict=False)
                     lines.append(f"  network {net.network_address} mask {net.netmask}")
                 else:
-                    lines.append(f"  network {network}")
+                    lines.append(f"  network {network}")""" #??
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
                 if neigh_ip in vrf_bound_ips:
                     continue  # géré dans l'address-family VRF uniquement
-                options = router.bgp_neighbor_options.get(neigh_ip, {})
-                if options.get("activate", True):
-                    lines.append(f"  neighbor {neigh_ip} activate")
-                else:
-                    lines.append(f"  no neighbor {neigh_ip} activate")
-                if options.get("next_hop_self"):
+                #options = router.bgp_neighbor_options.get(neigh_ip, {})
+                #if options.get("activate", True):
+                 # full-mesh
+                lines.append(f"  neighbor {neigh_ip} activate")
+                if neigh_asn == router.asn:
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
+                """else:
+                    lines.append(f"  no neighbor {neigh_ip} activate")""" # pas besoin de désactiver car on pourrait en avoir besoin pour du trafic internet classique
+                """if options.get("next_hop_self"):
+                    lines.append(f"  neighbor {neigh_ip} next-hop-self")""" #??
                 if router.role == "CE":
                     lines.append(f"  network {as_obj.loopback_pool.network_address} mask {as_obj.loopback_pool.netmask}")
-                if options.get("allowas_in") or as_obj.allow_as_in:
+                if as_obj.allow_as_in: #options.get("allowas_in") or
                     lines.append(f"  neighbor {neigh_ip} allowas-in") #ça fonctionne ici parce qu'il a qu'un seul voisin, sinon ça mettrait cette ligne plusieurs fois ??
             lines += [" exit-address-family"]
 
@@ -650,7 +653,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 lines += [" !", f" address-family ipv4 vrf {vrf_name}"]
                 for peer in peers:
                     peer_ip = peer["ip"]
-                    lines.append(f"  neighbor {peer_ip} remote-as {peer['asn']}")
+                    #lines.append(f"  neighbor {peer_ip} remote-as {peer['asn']}") # pas besoin de mettre ça ici, déjà dans la table globale
                     if peer.get("activate", True):
                         lines.append(f"  neighbor {peer_ip} activate")
                     if peer.get("allowas_in"):
