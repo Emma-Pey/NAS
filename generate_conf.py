@@ -476,13 +476,6 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
             "!",
         ]
 
-    if as_obj.ip_version == 4 and router.mpls_interfaces:
-        lines += [
-            "mpls label protocol ldp",
-            "mpls ldp router-id Loopback0 force",
-            "!",
-        ]
-
     lines += [
         "ip tcp synwait-time 5",
         "!",
