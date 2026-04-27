@@ -24,7 +24,7 @@
             { "router": "P2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
           ]
         },
-        { "name": "P2", "number": 3, "role": "P", "neighbors": [
+        { "name": "P2", "number": 3, "role": "P", "route_reflector": true, "neighbors": [
             { "router": "P1", "type": "intra-as", "interface": "FastEthernet0/0" },
             { "router": "PE2", "type": "intra-as", "interface": "GigabitEthernet1/0" }
           ]

@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass, field
 import os
 import shutil
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Union
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +53,8 @@ class Router:
     interface_options: Dict[str, Dict[str, Union[str, bool, int]]] = field(default_factory=dict)
     unused_interfaces: List[str] = field(default_factory=list)
     loopback_prefix_len_v4: int = 32
+    route_reflector: bool = False
+    rr_client_neighbors: Set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -147,7 +149,12 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                 number=rdata["number"],
                 role=rdata["role"],
                 asn=rdata.get("router_asn", as_obj.asn),
-                neighbors=[Neighbor(**n) for n in rdata.get("neighbors", [])]
+                neighbors=[Neighbor(**n) for n in rdata.get("neighbors", [])],
+                route_reflector=(
+                    rdata.get("route_reflector", False)
+                    or rdata.get("route-reflector", False)
+                    or rdata.get("route reflector", False)
+                ),
             )
             
             # Paramètres de base
@@ -310,6 +317,27 @@ def build_bgp_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
         if not as_obj.mpls:
             continue  # seul le cœur MPLS a besoin d'un full-mesh iBGP
+
+        rr_routers = [r for r in as_obj.routers.values() if r.route_reflector]
+        if rr_routers:
+            pe_routers = [r for r in as_obj.routers.values() if r.role.lower() == "pe"]
+
+            # RR mode: PE clients only peer with RR(s), optional RR-RR peering for redundancy.
+            for client in pe_routers:
+                if client.route_reflector:
+                    continue
+                for rr in rr_routers:
+                    client.bgp_neighbors[str(rr.loopback)] = as_obj.asn
+                    rr.bgp_neighbors[str(client.loopback)] = as_obj.asn
+                    rr.rr_client_neighbors.add(str(client.loopback))
+
+            for i in range(len(rr_routers)):
+                for j in range(i + 1, len(rr_routers)):
+                    rr1, rr2 = rr_routers[i], rr_routers[j]
+                    rr1.bgp_neighbors[str(rr2.loopback)] = as_obj.asn
+                    rr2.bgp_neighbors[str(rr1.loopback)] = as_obj.asn
+            continue
+
         routers = list(as_obj.routers.values())
         for i in range(len(routers)):
             for j in range(i + 1, len(routers)):
@@ -321,6 +349,45 @@ def build_vpnv4_fullmesh(as_map: Dict[str, AutonomousSystem]) -> None:
     for as_obj in as_map.values():
         if not as_obj.mpls:
             continue
+
+        rr_routers = [r for r in as_obj.routers.values() if r.route_reflector]
+        if rr_routers:
+            pe_routers = [r for r in as_obj.routers.values() if r.role.lower() == "pe"]
+
+            for client in pe_routers:
+                if client.route_reflector:
+                    continue
+                for rr in rr_routers:
+                    rr_ip = str(rr.loopback)
+                    client_ip = str(client.loopback)
+                    client.bgp_vpnv4_neighbors[rr_ip] = {
+                        "asn": as_obj.asn,
+                        "activate": True,
+                        "send_community_extended": True,
+                    }
+                    rr.bgp_vpnv4_neighbors[client_ip] = {
+                        "asn": as_obj.asn,
+                        "activate": True,
+                        "send_community_extended": True,
+                    }
+
+            for i in range(len(rr_routers)):
+                for j in range(i + 1, len(rr_routers)):
+                    rr1, rr2 = rr_routers[i], rr_routers[j]
+                    rr1_ip = str(rr1.loopback)
+                    rr2_ip = str(rr2.loopback)
+                    rr1.bgp_vpnv4_neighbors[rr2_ip] = {
+                        "asn": as_obj.asn,
+                        "activate": True,
+                        "send_community_extended": True,
+                    }
+                    rr2.bgp_vpnv4_neighbors[rr1_ip] = {
+                        "asn": as_obj.asn,
+                        "activate": True,
+                        "send_community_extended": True,
+                    }
+            continue
+
         pe_routers = [r for r in as_obj.routers.values() if r.role.lower() == "pe"]
         for r1 in pe_routers:
             for r2 in pe_routers:
@@ -619,6 +686,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 #if options.get("activate", True):
                  # full-mesh
                 lines.append(f"  neighbor {neigh_ip} activate")
+                if neigh_ip in router.rr_client_neighbors:
+                    lines.append(f"  neighbor {neigh_ip} route-reflector-client")
                 if neigh_asn == router.asn:
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
                 """else:
@@ -633,6 +702,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
 
             if router.bgp_vpnv4_neighbors:
                 lines += [" !", " address-family vpnv4"]
+                if router.route_reflector:
+                    lines.append("  no bgp default route-target filter")
                 for neigh_ip, opts in router.bgp_vpnv4_neighbors.items():
                     if opts.get("activate", True):
                         lines.append(f"  neighbor {neigh_ip} activate")
@@ -640,6 +711,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                         lines.append(f"  no neighbor {neigh_ip} activate")
                     if opts.get("send_community_extended"):
                         lines.append(f"  neighbor {neigh_ip} send-community extended")
+                    if neigh_ip in router.rr_client_neighbors:
+                        lines.append(f"  neighbor {neigh_ip} route-reflector-client")
                 lines.append(" exit-address-family")
 
             for vrf_name, peers in router.vrf_bgp_neighbors.items():
