@@ -105,7 +105,7 @@
     {
       "name": "AS5",
       "asn": 5,
-      "addressing": { "loopback_pool": "192.168.22.0/24", "link_pool": "10.0.4.0/24" },
+      "addressing": { "loopback_pool": "192.168.31.0/24", "link_pool": "10.0.4.0/24" },
       "routers": [
         { "name": "CE5", "number": 9, "role": "CE", "neighbors": [
             { "router": "AS1:P1", "type": "inter-as", "interface": "FastEthernet0/0" }

@@ -655,7 +655,13 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 f"router bgp {router.asn}",
                 " bgp log-neighbor-changes",
             ]
+            # IPs des CE liées à une VRF : présentes dans bgp_neighbors pour TCP, mais
+            # ne doivent pas être activées dans la table IPv4 globale
+            vrf_bound_ips = {peer["ip"] for peers in router.vrf_bgp_neighbors.values() for peer in peers}
+
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
+                if neigh_ip in vrf_bound_ips:
+                    continue
                 lines.append(f" neighbor {neigh_ip} remote-as {neigh_asn}")
                 if neigh_asn == router.asn:
                     lines.append(f" neighbor {neigh_ip} update-source Loopback0")
@@ -667,10 +673,6 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                             lines.append(f" neighbor {neigh_ip} allowas-in")
                     else:
                         lines.append(f" neighbor {neigh_ip} allowas-in {allowas_value}")""" ## ??
-
-            # IPs des CE liées à une VRF : présentes dans bgp_neighbors pour TCP, mais
-            # ne doivent pas être activées dans la table IPv4 globale
-            vrf_bound_ips = {peer["ip"] for peers in router.vrf_bgp_neighbors.values() for peer in peers}
 
             lines += [" !", " address-family ipv4"]
             """for network in router.bgp_networks_v4: 
@@ -719,7 +721,7 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 lines += [" !", f" address-family ipv4 vrf {vrf_name}"]
                 for peer in peers:
                     peer_ip = peer["ip"]
-                    #lines.append(f"  neighbor {peer_ip} remote-as {peer['asn']}") # pas besoin de mettre ça ici, déjà dans la table globale
+                    lines.append(f"  neighbor {peer_ip} remote-as {peer['asn']}")
                     if peer.get("activate", True):
                         lines.append(f"  neighbor {peer_ip} activate")
                     if peer.get("allowas_in"):
