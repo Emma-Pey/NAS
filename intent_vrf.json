@@ -97,10 +97,10 @@
       "addressing": { "loopback_pool": "192.168.21.0/24", "link_pool": "10.0.3.0/24" },
       "routers": [
         { "name": "CE3", "number": 7, "role": "CE", "neighbors": [
-            { "router": "AS1:PE1A", "type": "inter-as", "interface": "FastEthernet0/0", "ingress_for":"Loopback0" },
-            { "router": "AS1:PE1B", "type": "inter-as", "interface": "GigabitEthernet1/0", "ingress_for":"Loopback1" }
+            { "router": "AS1:PE1A", "type": "inter-as", "interface": "FastEthernet0/0", "ingress_for":["Loopback0", "Loopback2"] },
+            { "router": "AS1:PE1B", "type": "inter-as", "interface": "GigabitEthernet1/0", "ingress_for":["Loopback1"] }
           ], 
-          "other_interfaces":{"Loopback1":"172.16.21.0/24"}
+          "other_interfaces":{"Loopback1":"172.16.21.0/24","Loopback2":"172.16.22.0/24"}
         },
         { "name": "CE4", "number": 8, "role": "CE", "neighbors": [
             { "router": "AS1:PE2", "type": "inter-as", "interface": "FastEthernet0/0" }

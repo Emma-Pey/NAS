@@ -31,6 +31,7 @@ class Neighbor:
     interface: str
     vrf: Optional[str] = None
     ospf_cost: Optional[int] = None
+    ingress_for: Optional[list] = None  # interface locale dont cette session est l'ingress préféré (ex: "Loopback0")
 
 
 @dataclass
@@ -56,6 +57,7 @@ class Router:
     loopback_prefix_len_v4: int = 32
     route_reflector: bool = False
     rr_client_neighbors: Set[str] = field(default_factory=set)
+    other_interfaces: Dict[str, str] = field(default_factory=dict)  # nom → réseau CIDR (ex: "Loopback1": "172.16.21.0/24")
 
 
 @dataclass
@@ -117,8 +119,9 @@ class AutonomousSystem:
         used = set()
         for r in self.routers.values():
             for iface in r.interfaces.values():
-                net = ipaddress.ip_network(f"{iface.ip}/{iface.prefix_len}", strict=False)
-                used.add(net.supernet(new_prefix=new_prefix))
+                if iface.prefix_len >= new_prefix:  # ignore les interfaces plus larges que /30 (ex: loopbacks /24)
+                    net = ipaddress.ip_network(f"{iface.ip}/{iface.prefix_len}", strict=False)
+                    used.add(net.supernet(new_prefix=new_prefix))
 
         for net in subnets:
             if net not in used:
@@ -182,6 +185,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                     or rdata.get("route-reflector", False)
                     or rdata.get("route reflector", False)
                 ),
+                other_interfaces=rdata.get("other_interfaces", {}),
             )
             
             # Paramètres de base
@@ -308,6 +312,16 @@ def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:
     # Intra-AS links
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
+            # Extra interfaces (Loopback1, etc.) déclarées dans other_interfaces
+            for iface_name, cidr in router.other_interfaces.items():
+                net = ipaddress.IPv4Network(cidr, strict=False)
+                first_host = next(net.hosts())
+                router.interfaces[iface_name] = Interface(
+                    name=iface_name,
+                    ip=first_host,
+                    prefix_len=net.prefixlen,
+                )
+
             for neigh in router.neighbors:
                 if neigh.type == "intra-as":
                     neigh_router = as_obj.routers[neigh.router]
@@ -486,7 +500,8 @@ def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
                             peer_config = {
                                 "ip": str(n_ip),
                                 "asn": remote_as.asn,
-                                "activate": True
+                                "activate": True,
+                                "apply_ingress_policy": True,  # CLIENT_IN toujours appliqué sur les PE
                             }
                             router.vrf_bgp_neighbors.setdefault(vrf_name, []).append(peer_config)
                             
@@ -504,7 +519,8 @@ def build_inter_as_neighbors(as_map: Dict[str, AutonomousSystem]) -> None:
                             remote_router.vrf_bgp_neighbors.setdefault(remote_vrf, []).append({
                                 "ip": str(r_ip),
                                 "asn": as_obj.asn,
-                                "activate": True
+                                "activate": True,
+                                "apply_ingress_policy": True,
                             })
                             remote_router.bgp_neighbors[str(r_ip)] = as_obj.asn  # pour la session TCP
                         else:
@@ -709,36 +725,61 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                         lines.append(f" neighbor {neigh_ip} allowas-in {allowas_value}")""" ## ??
 
             lines += [" !", " address-family ipv4"]
-            """for network in router.bgp_networks_v4: 
-                if "/" in network:
-                    net = ipaddress.IPv4Network(network, strict=False)
-                    lines.append(f"  network {net.network_address} mask {net.netmask}")
-                else:
-                    lines.append(f"  network {network}")""" #??
+
+            # CE avec allow_as_in : on annonce Loopback0 + toutes les other_interfaces
+            #if router.role == "CE" and as_obj.allow_as_in:
+            """# Loopback0
+            bits_needed = math.ceil(math.log2(len(as_obj.routers))) if len(as_obj.routers) > 1 else 0
+            current_prefix = as_obj.loopback_pool.prefixlen + bits_needed
+            network_addr = ipaddress.IPv4Interface(f"{router.loopback}/{current_prefix}").network.network_address
+            lines.append(f"  network {network_addr} mask {_mask(current_prefix)}")
+            # other_interfaces"""
+
+            neigh_ip_to_neighbor: Dict[str, Neighbor] = {}
+            if router.role == "CE":
+                bits_needed = math.ceil(math.log2(len(as_obj.routers))) if len(as_obj.routers) > 1 else 0
+                current_prefix = as_obj.loopback_pool.prefixlen + bits_needed
+                network_addr = ipaddress.IPv4Interface(f"{router.loopback}/{current_prefix}").network.network_address
+                lines.append(f"  network {network_addr} mask {_mask(current_prefix)}")
+                #lines.append(f"  network {as_obj.loopback_pool.network_address} mask {as_obj.loopback_pool.netmask}")
+                for iface_name in router.other_interfaces:
+                    iface = router.interfaces.get(iface_name)
+                    if iface:
+                        net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
+                        lines.append(f"  network {net.network_address} mask {_mask(iface.prefix_len)}")
+                # Construire un lookup neigh_ip → Neighbor pour les CE (pour ingress_for)
+                """for n in router.neighbors:
+                    iface = router.interfaces.get(n.interface)
+                    if iface:
+                        neigh_ip_to_neighbor[str(iface.ip)] = n  # IP locale, pas utile
+                # On a besoin de l'IP du voisin (BGP peer), pas de l'IP locale
+                # On reconstruit depuis bgp_neighbors"""
+                for neigh_ip in router.bgp_neighbors:
+                    # Trouver le Neighbor dont l'interface a l'IP du pair dans le même subnet
+                    for n in router.neighbors:
+                        local_iface = router.interfaces.get(n.interface)
+                        if local_iface:
+                            subnet = ipaddress.IPv4Network(f"{local_iface.ip}/{local_iface.prefix_len}", strict=False)
+                            if ipaddress.IPv4Address(neigh_ip) in subnet:
+                                neigh_ip_to_neighbor[neigh_ip] = n
+                                break
+
             for neigh_ip, neigh_asn in router.bgp_neighbors.items():
                 if neigh_ip in vrf_bound_ips:
                     continue  # géré dans l'address-family VRF uniquement
-                #options = router.bgp_neighbor_options.get(neigh_ip, {})
-                #if options.get("activate", True):
-                 # full-mesh
                 lines.append(f"  neighbor {neigh_ip} activate")
                 if neigh_ip in router.rr_client_neighbors:
                     lines.append(f"  neighbor {neigh_ip} route-reflector-client")
                 if neigh_asn == router.asn:
                     lines.append(f"  neighbor {neigh_ip} next-hop-self")
-                """else:
-                    lines.append(f"  no neighbor {neigh_ip} activate")""" # pas besoin de désactiver car on pourrait en avoir besoin pour du trafic internet classique
-                """if options.get("next_hop_self"):
-                    lines.append(f"  neighbor {neigh_ip} next-hop-self")""" #??
-                if router.role == "CE":
-                    if not as_obj.allow_as_in:
-                        lines.append(f"  network {as_obj.loopback_pool.network_address} mask {as_obj.loopback_pool.netmask}")
-                    else:
-                        # On crée l'interface, puis on demande l'adresse du réseau (network_address)
-                        network_addr = ipaddress.IPv4Interface(f"{router.loopback}/{current_prefix}").network.network_address
-                        lines.append(f"  network {network_addr} mask {_mask(current_prefix)}") #lààààààààààààààààààà
-                if as_obj.allow_as_in: #options.get("allowas_in") or
-                    lines.append(f"  neighbor {neigh_ip} allowas-in") #ça fonctionne ici parce qu'il a qu'un seul voisin, sinon ça mettrait cette ligne plusieurs fois ??
+                if as_obj.allow_as_in:
+                    lines.append(f"  neighbor {neigh_ip} allowas-in")
+                # CE ingress TE : send-community + route-map out si ingress_for défini
+                n = neigh_ip_to_neighbor.get(neigh_ip)
+                if n and n.ingress_for:
+                    remote_name = n.router.split(":")[-1]
+                    lines.append(f"  neighbor {neigh_ip} send-community")
+                    lines.append(f"  neighbor {neigh_ip} route-map TO_{remote_name} out")
             lines += [" exit-address-family"]
 
             if router.bgp_vpnv4_neighbors:
@@ -765,9 +806,107 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                         lines.append(f"  neighbor {peer_ip} activate")
                     if peer.get("allowas_in"):
                         lines.append(f"  neighbor {peer_ip} allowas-in")
+                    if router.role == "PE" and peer.get("apply_ingress_policy"):
+                        lines.append(f"  neighbor {peer_ip} route-map CLIENT_IN in")
                 lines.append(" exit-address-family")
 
             lines.append("!")
+
+            # --- PE : community-list et route-map CLIENT_IN (toujours présents) ---
+            if router.role == "PE" and as_obj.ios_legacy_defaults:
+                lines += [
+                    "ip forward-protocol nd",
+                    "!",
+                ]
+            if router.role == "PE":
+                lines += [
+                    "ip community-list standard CL_PRIMARY permit 65636",
+                    "!",
+                ]
+                if as_obj.ios_legacy_defaults:
+                    lines += [
+                        "no ip http server",
+                        "no ip http secure-server",
+                        "!",
+                    ]
+                lines += [
+                    "route-map CLIENT_IN permit 10",
+                    " match community CL_PRIMARY",
+                    " set local-preference 200",
+                    "!",
+                    "route-map CLIENT_IN permit 20",
+                    " set local-preference 100",
+                    "!",
+                ]
+                return "\n".join(lines + [
+                    "control-plane",
+                    "!",
+                    "line con 0",
+                    " exec-timeout 0 0",
+                    " privilege level 15",
+                    " logging synchronous",
+                    " stopbits 1",
+                    "line aux 0",
+                    " exec-timeout 0 0",
+                    " privilege level 15",
+                    " logging synchronous",
+                    " stopbits 1",
+                    "line vty 0 4",
+                    " login",
+                    "!",
+                    "end",
+                ])
+
+            # --- CE : prefix-lists et route-maps TO_<PE> si ingress_for défini ---
+            if router.role == "CE":
+                ingress_neighbors = [n for n in router.neighbors if n.type == "inter-as" and n.ingress_for]
+                if ingress_neighbors:
+                    # On collecte toutes les interfaces annoncées par ce CE
+                    # (Loopback0 + other_interfaces)
+                    all_ifaces = {"Loopback0": router.loopback_prefix_len_v4}
+                    for iface_name in router.other_interfaces:
+                        iface = router.interfaces.get(iface_name)
+                        if iface:
+                            all_ifaces[iface_name] = iface.prefix_len
+
+                    # Prefix-list par interface
+                    for iface_name in all_ifaces:
+                        if iface_name == "Loopback0":
+                            # Même calcul que pour le network statement et l'adresse loopback
+                            bits_needed = math.ceil(math.log2(len(as_obj.routers))) if len(as_obj.routers) > 1 else 0
+                            lo_prefix = as_obj.loopback_pool.prefixlen + bits_needed
+                            net = ipaddress.IPv4Interface(f"{router.loopback}/{lo_prefix}").network
+                            plen = lo_prefix
+                        else:
+                            iface = router.interfaces.get(iface_name)
+                            net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
+                            plen = iface.prefix_len
+                        pl_name = f"PL_{iface_name.replace('Loopback', 'L').replace('/', '_')}"
+                        lines += [
+                            f"ip prefix-list {pl_name} seq 5 permit {net.network_address}/{plen}",
+                            "!",
+                        ]
+
+                    # Route-map TO_<PE> par voisin inter-AS
+                    for neigh in ingress_neighbors:
+                        # Nom du PE distant (ex: "PE1A")
+                        remote_name = neigh.router.split(":")[-1]
+                        rm_name = f"TO_{remote_name}"
+                        lines += [
+                                f"route-map {rm_name} permit 10"]
+                        for iface in neigh.ingress_for: # ex: "Loopback0" # toutes les interfaces dont on veut sélectionner le noeud entrant
+                            pl = f"PL_{iface.replace('Loopback', 'L').replace('/', '_')}"
+                            lines += [f" match ip address prefix-list {pl}"]
+                        lines += [ " set community 65636", "!",]     
+
+                    if as_obj.ios_legacy_defaults:
+                        lines += [
+                            "ip forward-protocol nd",
+                            "!",
+                            "no ip http server",
+                            "no ip http secure-server",
+                            "!",
+                        ]
 
     # ------------------------------------------------------------------ IPv6
     else:
@@ -921,9 +1060,9 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
 def main(intent_path: str) -> None:
     as_map = parse_intent(intent_path)
 
-    if os.path.exists("configs_bon_nommage"):
-        shutil.rmtree("configs_bon_nommage")
-    os.makedirs("configs_bon_nommage", exist_ok=True)
+    if os.path.exists("configs_ingress_node"):
+        shutil.rmtree("configs_ingress_node")
+    os.makedirs("configs_ingress_node", exist_ok=True)
 
     allocate_addresses(as_map)
     build_bgp_fullmesh(as_map)
@@ -933,7 +1072,7 @@ def main(intent_path: str) -> None:
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
             cfg = generate_router_config(router, as_obj)
-            fname = f"configs_bon_nommage/i{router.number}_startup-config.cfg"
+            fname = f"configs_ingress_node/i{router.number}_startup-config.cfg"
             with open(fname, "w") as f:
                 f.write(cfg)
             print(f"Generated {fname}")
