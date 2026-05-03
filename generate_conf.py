@@ -58,6 +58,7 @@ class Router:
     route_reflector: bool = False
     rr_client_neighbors: Set[str] = field(default_factory=set)
     other_interfaces: Dict[str, str] = field(default_factory=dict)  # nom → réseau CIDR (ex: "Loopback1": "172.16.21.0/24")
+    internet_gateway: bool = False  # annonce 0.0.0.0/0 via BGP avec static Null0
 
 
 @dataclass
@@ -75,6 +76,7 @@ class AutonomousSystem:
     ospf_style: str = "network"
     ios_legacy_defaults: bool = False
     mpls: bool = False
+    rsvp: bool = False  # active RSVP + MPLS-TE sur les interfaces core
     routers: Dict[str, Router] = field(default_factory=dict)
     allow_as_in: bool = False
 
@@ -169,6 +171,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
             ospf_style=as_data.get("routing", {}).get("ospf_style", "network"),
             ios_legacy_defaults=as_data.get("ios_legacy_defaults", False),
             mpls=as_data.get("mpls", False),
+            rsvp=as_data.get("rsvp", False),
             allow_as_in=as_data.get("bgp", {}).get("allow-as in", False),
         )
 
@@ -186,6 +189,7 @@ def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
                     or rdata.get("route reflector", False)
                 ),
                 other_interfaces=rdata.get("other_interfaces", {}),
+                internet_gateway=rdata.get("internet_gateway", False),
             )
             
             # Paramètres de base
@@ -591,6 +595,9 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
         "!",
     ]
 
+    if as_obj.mpls and as_obj.rsvp:
+        lines += ["mpls traffic-eng tunnels", "!"]
+
     # ------------------------------------------------------------------ IPv4
     if as_obj.ip_version == 4:
         rid = str(router.loopback)
@@ -632,6 +639,10 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 iface_lines.append(f" ip ospf {as_obj.process_id} area {iface.ospf_area}")
             if iface.name in router.mpls_interfaces:
                 iface_lines.append(" mpls ip")
+                if as_obj.rsvp:
+                    iface_lines.append(" mpls traffic-eng tunnels")
+                    bw = 1000000 if "GigabitEthernet" in iface.name else 100000
+                    iface_lines.append(f" ip rsvp bandwidth {bw}")
 
             options = router.interface_options.get(iface.name, {})
             if "duplex" in options:
@@ -656,6 +667,9 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 " negotiation auto",
                 "!",
             ]
+
+        if router.internet_gateway:
+            lines += ["ip route 0.0.0.0 0.0.0.0 Null0", "!"]
 
         # VRF definitions (if any)
         if router.vrfs:
@@ -683,6 +697,11 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                 f"router ospf {as_obj.process_id}",
                 f" router-id {rid}",
             ]
+            if as_obj.mpls and as_obj.rsvp:
+                lines += [
+                    " mpls traffic-eng router-id Loopback0",
+                    f" mpls traffic-eng area {as_obj.area}",
+                ]
             """if router.role == "PE" and inter_as_iface:
                 for int in inter_as_iface:
                     lines.append(f" passive-interface {int}") #utile si ospf pas activé sur les liens inter-as ??
@@ -747,6 +766,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                     if iface:
                         net = ipaddress.IPv4Interface(f"{iface.ip}/{iface.prefix_len}").network
                         lines.append(f"  network {net.network_address} mask {_mask(iface.prefix_len)}")
+                if router.internet_gateway:
+                    lines.append("  network 0.0.0.0 mask 0.0.0.0")
                 # Construire un lookup neigh_ip → Neighbor pour les CE (pour ingress_for)
                 """for n in router.neighbors:
                     iface = router.interfaces.get(n.interface)
@@ -1062,9 +1083,9 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
 def main(intent_path: str) -> None:
     as_map = parse_intent(intent_path)
 
-    if os.path.exists("configs_ingress_node"):
-        shutil.rmtree("configs_ingress_node")
-    os.makedirs("configs_ingress_node", exist_ok=True)
+    if os.path.exists("configs_final"):
+        shutil.rmtree("configs_final")
+    os.makedirs("configs_final", exist_ok=True)
 
     allocate_addresses(as_map)
     build_bgp_fullmesh(as_map)
@@ -1074,7 +1095,7 @@ def main(intent_path: str) -> None:
     for as_obj in as_map.values():
         for router in as_obj.routers.values():
             cfg = generate_router_config(router, as_obj)
-            fname = f"configs_ingress_node/i{router.number}_startup-config.cfg"
+            fname = f"configs_final/i{router.number}_startup-config.cfg"
             with open(fname, "w") as f:
                 f.write(cfg)
             print(f"Generated {fname}")

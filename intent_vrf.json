@@ -38,30 +38,38 @@
         { "name": "PE2", "number": 4, "role": "PE", "neighbors": [
             { "router": "P2", "type": "intra-as", "interface": "FastEthernet0/0" },
             { "router": "AS3:CE2", "type": "inter-as", "interface": "GigabitEthernet1/0", "vrf": "BLACK" },
-            { "router": "AS4:CE4", "type": "inter-as", "interface": "GigabitEthernet2/0", "vrf": "BLUE" }
+            { "router": "AS4:CE4", "type": "inter-as", "interface": "GigabitEthernet2/0", "vrf": "BLUE" },
+            { "router": "AS6:ISP", "type": "inter-as", "interface": "GigabitEthernet3/0", "vrf": "INTERNET" }
           ]
         }
       ],
       "bgp":{"allow-as in": false},
       "mpls": true,
+      "rsvp": true,
       "vrfs": [
         {
           "name": "BLACK",
           "rd_base": "100",
-          "rt_import": ["1:10", "1:30"],
+          "rt_import": ["1:10", "1:30", "1:40"],
           "rt_export": ["1:10"]
         },
         {
           "name": "BLUE",
           "rd_base": "200",
-          "rt_import": ["1:20", "1:30"],
+          "rt_import": ["1:20", "1:30", "1:40"],
           "rt_export": ["1:20"]
         },
         {
           "name": "PINK",
           "rd_base": "300",
-          "rt_import": ["1:10", "1:20", "1:30"],
+          "rt_import": ["1:10", "1:20", "1:30", "1:40"],
           "rt_export": ["1:30"]
+        },
+        {
+          "name": "INTERNET",
+          "rd_base": "400",
+          "rt_import": ["1:40"],
+          "rt_export": ["1:40"]
         }
       ]
     },
@@ -117,7 +125,20 @@
       "routers": [
         { "name": "CE5", "number": 9, "role": "CE", "neighbors": [
             { "router": "AS1:P1", "type": "inter-as", "interface": "FastEthernet0/0" }
-          ] 
+          ]
+        }
+      ],
+      "mpls": false,
+      "bgp":{"allow-as in": false}
+    },
+    {
+      "name": "AS6",
+      "asn": 6,
+      "addressing": { "loopback_pool": "203.0.113.0/24", "link_pool": "10.0.5.0/24" },
+      "routers": [
+        { "name": "ISP", "number": 11, "role": "CE", "internet_gateway": true, "neighbors": [
+            { "router": "AS1:PE2", "type": "inter-as", "interface": "FastEthernet0/0" }
+          ]
         }
       ],
       "mpls": false,
