@@ -898,6 +898,8 @@ def generate_router_config(router: Router, as_obj: AutonomousSystem) -> str:
                             pl = f"PL_{iface.replace('Loopback', 'L').replace('/', '_')}"
                             lines += [f" match ip address prefix-list {pl}"]
                         lines += [ " set community 65636", "!",]     
+                        lines += [
+                                f"route-map {rm_name} permit 20", "!"] # on permit le reste 
 
                     if as_obj.ios_legacy_defaults:
                         lines += [
