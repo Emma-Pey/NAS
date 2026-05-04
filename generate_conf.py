@@ -32,7 +32,7 @@ def main(intent_path: str) -> None:
 
     print("\n=== Address Summary ===")
     for as_obj in as_map.values():
-        print(f"\n{as_obj.name} (IPv{as_obj.ip_version}, {as_obj.protocol}):")
+        print(f"\n{as_obj.name} : {len(as_obj.routers)} routeur{"s" if len(as_obj.routers)>1 else ""}")
         for router in as_obj.routers.values():
             lo_len = router.loopback_prefix_len_v4 if as_obj.ip_version == 4 else 128
             print(f"  {router.name:<6}  Lo0: {router.loopback}/{lo_len}")
