@@ -4,9 +4,9 @@ import os
 import sys
 import shutil
 
-from parsing import parse_intent
-from addressing import allocate_addresses
-from bgp import build_bgp_fullmesh, build_vpnv4_fullmesh, build_inter_as_neighbors
+from generators.parsing import parse_intent
+from generators.addressing import allocate_addresses
+from generators.bgp import build_bgp_fullmesh, build_vpnv4_fullmesh, build_inter_as_neighbors
 from generators.config import generate_router_config
 
 

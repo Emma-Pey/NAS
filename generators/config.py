@@ -2,7 +2,7 @@ import math
 import ipaddress
 from typing import Dict, List
 
-from models import Router, AutonomousSystem
+from generators.models import Router, AutonomousSystem
 
 
 def _mask(prefix_len: int) -> str:

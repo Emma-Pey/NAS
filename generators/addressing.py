@@ -1,7 +1,7 @@
 import ipaddress
 from typing import Dict
 
-from models import AutonomousSystem, Interface
+from generators.models import AutonomousSystem, Interface
 
 
 def allocate_addresses(as_map: Dict[str, AutonomousSystem]) -> None:

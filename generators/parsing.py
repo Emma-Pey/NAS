@@ -2,7 +2,7 @@ import json
 import ipaddress
 from typing import Dict
 
-from models import AutonomousSystem, Router, Neighbor, Interface
+from generators.models import AutonomousSystem, Router, Neighbor, Interface
 
 
 def parse_intent(path: str) -> Dict[str, AutonomousSystem]:
