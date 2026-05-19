@@ -52,10 +52,10 @@ flag `rsvp`.
 
 ```
 generate_conf.py      # point d'entrée
-models.py             # dataclasses (Router, Interface, AutonomousSystem...)
-parsing.py            # lecture du fichier JSON
-addressing.py         # allocation des IPs (loopbacks, liens)
-bgp.py                # construction des sessions BGP (iBGP, VPNv4, inter-AS)
+generators/models.py             # dataclasses (Router, Interface, AutonomousSystem...)
+generators/parsing.py            # lecture du fichier JSON
+generators/addressing.py         # allocation des IPs (loopbacks, liens)
+generators/bgp.py                # construction des sessions BGP (iBGP, VPNv4, inter-AS)
 generators/config.py  # génération des configs Cisco IOS
 ```
 
