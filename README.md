@@ -19,7 +19,9 @@ python drag_drop.py <file.gns3>
 
 ## Fichier d'intent
 
- `intent_vrf.json` : Topologie complète de tests 3 AS clients avec MPLS, VRF, RSVP, ...*
+ `intent_vrf.json` : Topologie complète de tests 3 AS clients avec MPLS, VRF, RSVP, ...
+
+ Le champ "number" d'un routeur correspond au dynamips_id du routeur sur GNS3 (pour nommer correctement les fichieres de config `iX_startup-config.cfg`).
 
 ### Points clés & fonctionnalités avancées :
 

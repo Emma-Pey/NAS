@@ -30,7 +30,7 @@ def run_drag_and_drop_bot():
     # On parcourt les routeurs extraits dans 'folders'
     for name, (node_id, dynamips_id) in folders.items():
         # Fichier source généré
-        source_file = os.path.join(SOURCE_CFG_DIR, f"i{name}_startup-config.cfg")
+        source_file = os.path.join(SOURCE_CFG_DIR, f"i{dynamips_id}_startup-config.cfg")
         # Vérifier si le fichier généré existe bien
         if os.path.exists(source_file):
             target_path = os.path.join(GNS3_PROJECT_ROOT, "project-files", "dynamips", node_id, "configs", f"i{dynamips_id}_startup-config.cfg")
